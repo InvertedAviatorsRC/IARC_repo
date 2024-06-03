@@ -1,3 +1,5 @@
+# Author Inverted Aviators RC
+
 local inputs = {{ "Input", SOURCE }}
 
 local outputs = { "GunVal" }
