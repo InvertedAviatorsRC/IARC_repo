@@ -761,7 +761,9 @@ String page() {
   html += "<hr>";
   html += "<div class='row'><a href='/start'>Start Session</a></div>";
   html += "<div class='row'><a href='/stop'>Stop (Save Local)</a></div>";
-  html += "<div class='row'><a href='/stop_sync' style='font-weight:bold;'>Stop + Sync</a></div>";
+  html += "<div class='row'><button onclick='stopAndSync()' style='font-weight:bold;'>Stop + Sync</button></div>";
+  html += "<div class='row'><span id='syncmsg'></span></div>";
+
   html += "<div class='row'><a href='/sync_pending'>Sync Pending</a></div>";
 
   html += "<hr>";
@@ -777,10 +779,6 @@ String page() {
             "const r=await fetch('/status',{cache:'no-store'});"
             "if(!r.ok) return;"
             "const s=await r.json();"
-
-            // show banner while syncing
-            "const syncing = (s.syncState != 0);"           // assuming 0 == SYNC_IDLE
-            "document.getElementById('banner').style.display = syncing ? 'block' : 'none';"
 
             "document.getElementById('attempts').textContent=s.attempts;"
             "document.getElementById('makes').textContent=s.makes;"
@@ -800,6 +798,44 @@ String page() {
           "}"
         "}"
         "tick(); setInterval(tick, 250);";
+
+  html += "async function stopAndSync(){"
+            "const msg=document.getElementById('syncmsg');"
+            "document.getElementById('banner').style.display='block';"
+            "msg.textContent='Stopping session + starting device sync...';"
+
+            "try{"
+
+              // 1) Stop session locally (no navigation)
+              "await fetch('/stop_sync',{cache:'no-store'});"
+
+              // Keep polling status until sync finishes
+              "msg.textContent='Syncing… (ESP32 will temporarily drop this page)';"
+              "let done = false;"
+              "for (let i=0; i<120; i++){"          // ~30s at 250ms
+                "await new Promise(r => setTimeout(r, 250));"
+                "try{"
+                  "const r = await fetch('/status', { cache:'no-store' });"
+                  "if(!r.ok) continue;"
+                  "const s = await r.json();"
+                  // When the server is back and syncState is IDLE (or DONE), we are finished
+                  "if (s.syncState === 'IDLE' || s.syncState === 'DONE'){"
+                    "done = true;"
+                    "break;"
+                  "}"
+                "}catch(e){"
+                  // During STA mode the server may be unreachable, that is expected
+                "}"
+              "}"
+
+              "msg.textContent = done ? 'Uploaded OK!' : 'Sync timed out, try Sync Pending.';"
+            "}catch(e){"
+              "msg.textContent='Error: ' + e;"
+            "}finally{"
+              "setTimeout(()=>{document.getElementById('banner').style.display='none';}, 1200);"
+            "}"
+          "}";
+
   html += "</script>";
 
   html += "</body></html>";
@@ -1077,6 +1113,73 @@ void setup() {
 
     server.send(200, "application/json", json);
   });
+
+  server.on("/export", []() {
+    // We want to return epoch seconds for each row, but the ESP32 only has millis().
+    // The PHONE provides current epoch seconds as a query param: /export?epoch=...
+    //
+    // Row format your Apps Script expects:
+    // [session_id, startEpoch, attemptEpoch, distance_ft, "mode", attempt_num, "result", makeEpoch]
+
+    uint32_t epochNow = 0;
+    if (server.hasArg("epoch")) {
+      epochNow = (uint32_t)server.arg("epoch").toInt();
+    }
+
+    uint32_t nowMs = (uint32_t)millis();
+
+    String payload;
+    payload.reserve(8192);
+
+    payload += "{";
+    payload += "\"secret\":\"";
+    payload += jsonEscape(sheetsSecret);
+    payload += "\",";
+    payload += "\"sheetUrl\":\"";
+    payload += jsonEscape(sheetsUrl);
+    payload += "\",";
+    payload += "\"rows\":[";
+
+    bool first = true;
+
+    for (size_t i = 0; i < sessionRows.size(); i++) {
+      const AttemptRow& r = sessionRows[i];
+
+      // Convert millis timestamps to epoch seconds (0 if epochNow not provided)
+      uint32_t startEpoch = 0;
+      uint32_t attemptEpoch = 0;
+      uint32_t makeEpoch = 0;
+
+      if (epochNow != 0) {
+        startEpoch   = epochNow - (uint32_t)((nowMs - r.start_ms) / 1000UL);
+        attemptEpoch = epochNow - (uint32_t)((nowMs - r.attempt_ms) / 1000UL);
+        if (r.make_ms != 0) {
+          makeEpoch  = epochNow - (uint32_t)((nowMs - r.make_ms) / 1000UL);
+        }
+      }
+
+      if (!first) payload += ",";
+      first = false;
+
+      payload += "[";
+      payload += String(r.session_id); payload += ",";
+      payload += String(startEpoch); payload += ",";
+      payload += String(attemptEpoch); payload += ",";
+      payload += String(r.distance_ft, 1); payload += ",";
+      payload += "\""; payload += jsonEscape(r.mode); payload += "\",";
+      payload += String(r.attempt_num); payload += ",";
+      payload += "\""; payload += jsonEscape(r.result); payload += "\",";
+      payload += String(makeEpoch);
+      payload += "]";
+    }
+
+    payload += "]}";
+
+    server.send(200, "application/json", payload);
+  });
+
+
+
 
 
   server.on("/calibrate", []() {
