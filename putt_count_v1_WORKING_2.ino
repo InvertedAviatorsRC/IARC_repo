@@ -728,7 +728,8 @@ String page() {
   html += "<h2>Total Putt Counter</h2>";
 
   html += "<div id='banner' style='display:none; padding:10px; background:#fff3cd; border:1px solid #ffeeba; margin:10px 0;'>";
-  html += "Syncing to Google Sheets…";
+  html += "Saving session…";
+
   html += "</div>";
 
 
@@ -759,12 +760,14 @@ String page() {
   html += "<div class='row'><span class='k'>State:</span> <span id='state'>...</span></div>";
 
   html += "<hr>";
-  html += "<div class='row'><a href='/start'>Start Session</a></div>";
-  html += "<div class='row'><a href='/stop'>Stop (Save Local)</a></div>";
-  html += "<div class='row'><button onclick='stopAndSync()' style='font-weight:bold;'>Stop + Sync</button></div>";
+  html += "<div class='row'>";
+
+  html += "<button id='btnStart' onclick='startSession()' style='font-weight:bold; padding:10px 14px; margin-right:8px;'>Start Session</button>";
+  html += "<button id='btnEnd' onclick='endSession()' style='font-weight:bold; padding:10px 14px;'>End Session</button>";
+
+  html += "</div>";
   html += "<div class='row'><span id='syncmsg'></span></div>";
 
-  html += "<div class='row'><a href='/sync_pending'>Sync Pending</a></div>";
 
   html += "<hr>";
   html += "<div class='row'><a href='/calibrate'>Manual Calibrate (NO ball)</a></div>";
@@ -773,70 +776,70 @@ String page() {
   html += "<hr>";
   html += "<div class='row'><span class='k'>Sync state:</span> <span id='sync'>...</span></div>";
 
-  html += "<script>";
-  html += "async function tick(){"
-          "try{"
-            "const r=await fetch('/status',{cache:'no-store'});"
-            "if(!r.ok) return;"
-            "const s=await r.json();"
+  html += "<script>\n";
 
-            "document.getElementById('attempts').textContent=s.attempts;"
-            "document.getElementById('makes').textContent=s.makes;"
-            "document.getElementById('pct').textContent=s.pct+'%';"
-            "document.getElementById('prox').textContent=s.prox;"
-            "document.getElementById('base').textContent=s.baseline;"
-            "document.getElementById('delta').textContent=s.delta;"
-            "document.getElementById('thr').textContent=s.threshold;"
-            "document.getElementById('present').textContent=s.present?'YES':'NO';"
-            "document.getElementById('state').textContent=s.state;"
-            "document.getElementById('mode').textContent=s.mode;"
-            "document.getElementById('dist').textContent=s.distanceFt;"
-            "document.getElementById('sync').textContent=s.syncState;"
-            "document.getElementById('sess').textContent=(s.sessionActive?'ON':'OFF')+' (id '+s.sessionId+')';"
-          "}catch(e){"
-              "document.getElementById('banner').style.display = 'block';"
-          "}"
-        "}"
-        "tick(); setInterval(tick, 250);";
+  html += "function setText(id, v){\n";
+  html += "  const el=document.getElementById(id);\n";
+  html += "  if(!el) return;\n";
+  html += "  el.textContent = (v===undefined || v===null) ? '' : v;\n";
+  html += "}\n";
 
-  html += "async function stopAndSync(){"
-            "const msg=document.getElementById('syncmsg');"
-            "document.getElementById('banner').style.display='block';"
-            "msg.textContent='Stopping session + starting device sync...';"
+  html += "async function tick(){\n";
+  html += "  try{\n";
+  html += "    const r=await fetch('/status',{cache:'no-store'});\n";
+  html += "    if(!r.ok){ setText('syncmsg','/status HTTP '+r.status); return; }\n";
+  html += "    const s=await r.json();\n";
 
-            "try{"
+  html += "    setText('attempts', s.attempts);\n";
+  html += "    setText('makes', s.makes);\n";
+  html += "    setText('pct', (s.pct===undefined? '' : (s.pct+'%')));\n";
+  html += "    setText('prox', s.prox);\n";
+  html += "    setText('base', s.baseline);\n";
+  html += "    setText('delta', s.delta);\n";
+  html += "    setText('thr', s.threshold);\n";
+  html += "    setText('present', s.present ? 'YES' : 'NO');\n";
+  html += "    setText('state', s.state);\n";
+  html += "    setText('mode', s.mode);\n";
+  html += "    setText('dist', s.distanceFt);\n";
+  html += "    setText('sync', s.syncState);\n";
+  html += "    setText('sess', (s.sessionActive?'ON':'OFF')+' (id '+s.sessionId+')');\n";
 
-              // 1) Stop session locally (no navigation)
-              "await fetch('/stop_sync',{cache:'no-store'});"
+  html += "    const b1=document.getElementById('btnStart'); if(b1) b1.disabled = !!s.sessionActive;\n";
+  html += "    const b2=document.getElementById('btnEnd');   if(b2) b2.disabled = !s.sessionActive;\n";
 
-              // Keep polling status until sync finishes
-              "msg.textContent='Syncing… (ESP32 will temporarily drop this page)';"
-              "let done = false;"
-              "for (let i=0; i<120; i++){"          // ~30s at 250ms
-                "await new Promise(r => setTimeout(r, 250));"
-                "try{"
-                  "const r = await fetch('/status', { cache:'no-store' });"
-                  "if(!r.ok) continue;"
-                  "const s = await r.json();"
-                  // When the server is back and syncState is IDLE (or DONE), we are finished
-                  "if (s.syncState === 'IDLE' || s.syncState === 'DONE'){"
-                    "done = true;"
-                    "break;"
-                  "}"
-                "}catch(e){"
-                  // During STA mode the server may be unreachable, that is expected
-                "}"
-              "}"
+  html += "    setText('syncmsg','');\n";
+  html += "  }catch(e){\n";
+  html += "    setText('syncmsg','tick error: '+(e && e.message ? e.message : e));\n";
+  html += "  }\n";
+  html += "}\n";
 
-              "msg.textContent = done ? 'Uploaded OK!' : 'Sync timed out, try Sync Pending.';"
-            "}catch(e){"
-              "msg.textContent='Error: ' + e;"
-            "}finally{"
-              "setTimeout(()=>{document.getElementById('banner').style.display='none';}, 1200);"
-            "}"
-          "}";
+  html += "window.addEventListener('load', ()=>{\n";
+  html += "  setText('syncmsg','UI loaded');\n";
+  html += "  tick();\n";
+  html += "  setInterval(tick, 250);\n";
+  html += "});\n";
 
-  html += "</script>";
+  html += "async function startSession(){\n";
+  html += "  try{ await fetch('/start',{cache:'no-store'}); }catch(e){}\n";
+  html += "}\n";
+
+  html += "async function endSession(){\n";
+  html += "  const msg=document.getElementById('syncmsg');\n";
+  html += "  const banner=document.getElementById('banner');\n";
+  html += "  if(banner) banner.style.display='block';\n";
+  html += "  if(msg) msg.textContent='Saving session...';\n";
+  html += "  try{\n";
+  html += "    await fetch('/stop_sync',{cache:'no-store'});\n";
+  html += "    if(msg) msg.textContent='Uploading... (may disconnect briefly)';\n";
+  html += "  }catch(e){\n";
+  html += "    if(msg) msg.textContent='Saved locally. Upload will retry automatically.';\n";
+  html += "  }finally{\n";
+  html += "    setTimeout(()=>{ if(banner) banner.style.display='none'; },1200);\n";
+  html += "  }\n";
+  html += "}\n";
+
+  html += "</script>\n";
+
 
   html += "</body></html>";
   return html;
