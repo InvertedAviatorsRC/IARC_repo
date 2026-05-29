@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gps-telemetry-visualizer"
+version = "0.1.0"
+description = "Create animated GPS path and speedometer videos from telemetry CSV files."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Jonathan Neve" }]
+dependencies = [
+    "imageio-ffmpeg>=0.4.9",
+    "matplotlib>=3.7",
+    "numpy>=1.23",
+    "pandas>=1.5",
+    "PySide6>=6.10",
+    "streamlit>=1.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pyinstaller>=6.20"]
+
+[project.scripts]
+gps-vis = "gps_telemetry_visualizer.ui:main"
+gps-vis-desktop = "gps_telemetry_visualizer.desktop:main"
+gps-vis-render = "gps_telemetry_visualizer.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["gps_telemetry_visualizer*"]
