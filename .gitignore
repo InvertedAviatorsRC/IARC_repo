@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+build/
+dist/
+*.egg-info/
+.pyinstaller-cache/
+output/
+*.mp4
+*.mov
