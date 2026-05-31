@@ -6,6 +6,7 @@ __pycache__/
 .ipynb_checkpoints/
 build/
 dist/
+release/
 *.egg-info/
 .pyinstaller-cache/
 output/
