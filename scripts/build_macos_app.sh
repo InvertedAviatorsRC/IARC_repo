@@ -8,11 +8,14 @@ mkdir -p "$PYINSTALLER_CONFIG_DIR"
 export MPLCONFIGDIR="$PYINSTALLER_CONFIG_DIR/matplotlib"
 mkdir -p "$MPLCONFIGDIR"
 
+python scripts/generate_app_icon.py
+
 python -m PyInstaller \
   --name "GPS Telemetry Visualizer" \
   --windowed \
   --noconfirm \
   --clean \
+  --icon assets/gps_app_icon.png \
   --collect-all imageio_ffmpeg \
   --hidden-import matplotlib.backends.backend_agg \
   desktop_app.py
