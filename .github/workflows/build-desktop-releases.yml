@@ -87,4 +87,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
-        run: gh release create "$RELEASE_TAG" release-assets/*.zip --target "$GITHUB_SHA" --generate-notes --title "GPS Telemetry Visualizer $RELEASE_TAG"
+        run: gh release create "$RELEASE_TAG" release-assets/*.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --generate-notes --title "GPS Telemetry Visualizer $RELEASE_TAG"
