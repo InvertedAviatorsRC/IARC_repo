@@ -7,7 +7,6 @@ __pycache__/
 build/
 dist/
 release/
-assets/gps_app_icon.png
 assets/inverted_aviators_rc_source.png
 *.egg-info/
 .pyinstaller-cache/
