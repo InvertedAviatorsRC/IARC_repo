@@ -2,89 +2,59 @@
 
 Create animated GPS path and speedometer videos from telemetry CSV files.
 
-The app can be used as a native desktop program, a Streamlit browser app, or a command line renderer. It reads a CSV with GPS telemetry, previews the map and speedometer, then exports an `.mp4` or transparent `.mov` overlay.
+The app reads a telemetry CSV, shows a preview of the animated map and speedometer, then exports an `.mp4` or transparent `.mov` overlay.
 
-## What You Need
+## Download The App
 
-- A Mac, Windows PC, or Linux computer
-- Python 3.9 or newer
-- A telemetry CSV file with GPS location data
+You do not need to install Python or use the terminal.
 
-The project installs its Python packages from `pyproject.toml` or `requirements.txt`. It also uses `imageio-ffmpeg`, so most users do not need to install FFmpeg separately.
+1. Open the [GitHub Releases page](https://github.com/InvertedAviatorsRC/IARC_repo/releases).
+2. Open the newest GPS Telemetry Visualizer release.
+3. Download the ZIP file for your computer:
 
-## Download The Program
+| Computer | Download |
+| --- | --- |
+| Windows PC | `GPS-Telemetry-Visualizer-Windows-x64.zip` |
+| Mac with an Apple M-series chip | `GPS-Telemetry-Visualizer-macOS-Apple-Silicon.zip` |
+| Mac with an Intel processor | `GPS-Telemetry-Visualizer-macOS-Intel.zip` |
 
-1. Open the GitHub repository page.
-2. Click the green `Code` button.
-3. Click `Download ZIP`.
-4. Unzip the downloaded file.
-5. Move the unzipped folder somewhere easy to find, such as your Desktop or Documents folder.
+### Which Mac Download Do I Need?
 
-You can also download it with Git if you already use Git:
+1. Click the Apple menu in the top-left corner of the screen.
+2. Click `About This Mac`.
+3. Look for `Chip` or `Processor`.
 
-```bash
-git clone https://github.com/InvertedAviatorsRC/IARC_repo.git
-cd IARC_repo
-git checkout codex/gps-telemetry-visualizer-package
-```
+Choose `Apple Silicon` if the chip name starts with `Apple M`, such as M1, M2, M3, M4, or M5. Choose `Intel` if the processor name contains `Intel`.
 
-If you downloaded the ZIP from a branch page, the folder name may include the branch name. That is fine.
+## Install On Windows
 
-## Install Python
+1. Download `GPS-Telemetry-Visualizer-Windows-x64.zip`.
+2. Open your Downloads folder.
+3. Right-click the ZIP file and select `Extract All`.
+4. Open the extracted folder.
+5. Double-click `GPS Telemetry Visualizer.exe`.
 
-Check whether Python is already installed:
+Windows may show a security message the first time you open the app because the download is not code-signed yet. If you trust this repository, click `More info`, then `Run anyway`.
 
-```bash
-python3 --version
-```
+## Install On macOS
 
-If that prints Python 3.9 or newer, you are ready for the next step.
+1. Download the ZIP file that matches your Mac.
+2. Double-click the ZIP file to unzip it.
+3. Drag `GPS Telemetry Visualizer.app` into your Applications folder.
+4. Open your Applications folder.
+5. Right-click `GPS Telemetry Visualizer.app`, then click `Open`.
+6. Confirm that you want to open the app.
 
-If Python is not installed, install it from:
+The right-click step is normally only needed the first time because the download is not notarized yet.
 
-[https://www.python.org/downloads/](https://www.python.org/downloads/)
+## Use The App
 
-On macOS, the installer may add `python3` and `pip3` commands. On Windows, make sure to check `Add python.exe to PATH` during installation.
-
-## Set Up The Program
-
-Open a terminal in the project folder.
-
-On macOS:
-
-```bash
-cd ~/Desktop/IARC_repo
-```
-
-Use the real folder path if you saved it somewhere else.
-
-Create a virtual environment:
-
-```bash
-python3 -m venv .venv
-```
-
-Turn it on:
-
-```bash
-source .venv/bin/activate
-```
-
-Install the app:
-
-```bash
-pip install -e .
-```
-
-That installs the GPS Telemetry Visualizer and all required packages.
-
-## Run The Desktop App
-
-After setup, run:
-
-```bash
-gps-vis-desktop
-```
+1. Drag a telemetry CSV file into the CSV area, or click `Browse CSV`.
+2. Check the detected GPS and speed columns.
+3. Choose your output folder.
+4. Adjust the output type, speed units, colors, FPS, or other settings.
+5. Review the preview.
+6. Click `Create`.
 
 The desktop app lets you:
 
@@ -95,62 +65,6 @@ The desktop app lets you:
 - Choose an output folder with a file browser
 - Preview the overlay before creating the final video
 - Export `.mp4` or `.mov`
-
-## Run The Browser App
-
-You can also run the Streamlit version:
-
-```bash
-gps-vis
-```
-
-Or:
-
-```bash
-streamlit run app.py
-```
-
-Streamlit opens the app in your web browser. It still runs locally on your computer.
-
-## Build A Double-Clickable macOS App
-
-If you want an app you can open from Finder without using the terminal every time, build the macOS app bundle.
-
-Install the development tools:
-
-```bash
-pip install -e ".[dev]"
-```
-
-Build the app:
-
-```bash
-bash scripts/build_macos_app.sh
-```
-
-The finished app will be created here:
-
-```bash
-dist/GPS Telemetry Visualizer.app
-```
-
-You can drag `GPS Telemetry Visualizer.app` into your Applications folder or onto your Desktop.
-
-If macOS blocks the app the first time you open it, right-click the app, choose `Open`, then confirm that you want to open it.
-
-## Command Line Rendering
-
-You can render directly from the terminal:
-
-```bash
-gps-vis-render path/to/telemetry.csv output/telemetry_both_overlay.mp4 --mode both
-```
-
-Use `.mov` when you want a ProRes 4444 overlay with transparency:
-
-```bash
-gps-vis-render path/to/telemetry.csv output/telemetry_both_overlay.mov --mode both
-```
 
 ## CSV Defaults
 
@@ -177,27 +91,147 @@ or:
 
 ## Output Files
 
-Use `.mp4` for normal videos with a solid background.
+Use `.mp4` for a normal video with a solid background.
 
-Use `.mov` when you want a transparent overlay that can be placed over other video in editing software.
+Use `.mov` when you want a ProRes 4444 overlay with transparency for video editing software.
 
-## Troubleshooting
+## Build From Source
 
-If `gps-vis-desktop` is not found, make sure the virtual environment is active:
+The downloadable apps above are the easiest option. These instructions are for developers who want to run or modify the source code.
+
+### Requirements
+
+- Python 3.9 or newer
+- Git, or a ZIP download of the source code
+
+Clone the branch:
+
+```bash
+git clone https://github.com/InvertedAviatorsRC/IARC_repo.git
+cd IARC_repo
+git checkout codex/gps-telemetry-visualizer-package
+```
+
+Create and activate a virtual environment on macOS or Linux:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Create and activate a virtual environment on Windows:
+
+```powershell
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+Install the app:
+
+```bash
+python -m pip install -e .
+```
+
+Run the native desktop app:
+
+```bash
+gps-vis-desktop
+```
+
+## Optional Browser App
+
+Developers can also run a local Streamlit version:
+
+```bash
+gps-vis
+```
+
+Or:
+
+```bash
+streamlit run app.py
+```
+
+## Build Desktop Downloads Locally
+
+Install the development tools:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+Build a macOS ZIP:
+
+```bash
+bash scripts/build_macos_app.sh
+```
+
+Build a Windows ZIP from PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_windows_app.ps1
+```
+
+The finished ZIP file will be created in the `release` folder.
+
+## Publish Downloads With GitHub Actions
+
+The repository includes `.github/workflows/build-desktop-releases.yml`.
+
+To test the builds without publishing a release:
+
+1. Open the repository's `Actions` tab.
+2. Select `Build desktop downloads`.
+3. Click `Run workflow`.
+4. Leave `release_tag` blank.
+
+To publish downloadable apps:
+
+1. Open the repository's `Actions` tab.
+2. Select `Build desktop downloads`.
+3. Click `Run workflow`.
+4. Enter a new version in `release_tag`, such as `v0.1.0`.
+5. Run the workflow.
+
+GitHub will build and publish the Windows, Apple Silicon Mac, and Intel Mac ZIP files on the Releases page.
+
+Pushing a Git tag that starts with `v`, such as `v0.1.0`, also publishes a release automatically.
+
+## Command Line Rendering
+
+Developers can render directly from a terminal:
+
+```bash
+gps-vis-render path/to/telemetry.csv output/telemetry_both_overlay.mp4 --mode both
+```
+
+Use `.mov` when you want a ProRes 4444 overlay with transparency:
+
+```bash
+gps-vis-render path/to/telemetry.csv output/telemetry_both_overlay.mov --mode both
+```
+
+## Troubleshooting Source Builds
+
+If `gps-vis-desktop` is not found, activate the virtual environment and try again.
+
+On macOS or Linux:
 
 ```bash
 source .venv/bin/activate
 ```
 
-Then try again.
+On Windows PowerShell:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
 
 If installation fails, upgrade `pip`:
 
 ```bash
 python -m pip install --upgrade pip
-pip install -e .
+python -m pip install -e .
 ```
 
-If the app cannot find your CSV columns, open the settings in the app and manually choose the correct GPS and speed columns.
-
-If rendering is slow, lower the FPS or increase the seconds between GPS points less aggressively. Higher FPS and long CSV files create more video frames.
+If the app cannot find your CSV columns, manually choose the correct GPS and speed columns in the app settings.
