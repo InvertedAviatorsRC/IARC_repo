@@ -7,11 +7,14 @@ New-Item -ItemType Directory -Force -Path $env:PYINSTALLER_CONFIG_DIR | Out-Null
 $env:MPLCONFIGDIR = Join-Path $env:PYINSTALLER_CONFIG_DIR "matplotlib"
 New-Item -ItemType Directory -Force -Path $env:MPLCONFIGDIR | Out-Null
 
+python scripts/generate_app_icon.py
+
 python -m PyInstaller `
   --name "GPS Telemetry Visualizer" `
   --windowed `
   --noconfirm `
   --clean `
+  --icon assets/gps_app_icon.png `
   --collect-all imageio_ffmpeg `
   --hidden-import matplotlib.backends.backend_agg `
   desktop_app.py
