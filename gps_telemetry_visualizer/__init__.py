@@ -7,6 +7,7 @@ from gps_telemetry_visualizer.core import (
     parse_gps,
     prepare_telemetry,
     render_animation,
+    render_preview_frames,
     render_static_preview,
 )
 
@@ -17,6 +18,7 @@ __all__ = [
     "parse_gps",
     "prepare_telemetry",
     "render_animation",
+    "render_preview_frames",
     "render_static_preview",
 ]
 
