@@ -1,7 +1,7 @@
 import io
 import unittest
 
-from gps_telemetry_visualizer.core import RenderConfig, convert_speed, parse_gps, prepare_telemetry
+from gps_telemetry_visualizer.core import RenderConfig, convert_speed, parse_gps, prepare_telemetry, render_preview_frames
 
 
 class CoreTests(unittest.TestCase):
@@ -25,6 +25,37 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(len(data.frame_x), 11)
         self.assertEqual(data.speed_col, "GSpd(kmh)")
         self.assertAlmostEqual(data.frame_speed[-1], convert_speed(36, "kmh", "mph"))
+
+    def test_prepare_telemetry_trims_to_requested_time_range(self):
+        csv_data = io.StringIO(
+            "GPS,GSpd(kmh),Hdg(°),Alt(m)\n"
+            "44.0 -93.0,0,0,200\n"
+            "44.0001 -93.0001,36,10,201\n"
+            "44.0002 -93.0002,72,20,202\n"
+        )
+        data = prepare_telemetry(
+            csv_data,
+            RenderConfig(fps=10, seconds_between_gps_points=1, start_time=0.5, end_time=1.5),
+        )
+
+        self.assertEqual(data.valid_rows, 3)
+        self.assertAlmostEqual(data.total_duration_seconds, 2.0)
+        self.assertAlmostEqual(data.start_time, 0.5)
+        self.assertAlmostEqual(data.end_time, 1.5)
+        self.assertEqual(len(data.frame_x), 11)
+        self.assertGreater(data.frame_speed[-1], data.frame_speed[0])
+
+    def test_render_preview_frames_returns_png_frames(self):
+        csv_data = io.StringIO(
+            "GPS,GSpd(kmh),Hdg(°),Alt(m)\n"
+            "44.0 -93.0,0,0,200\n"
+            "44.0001 -93.0001,36,10,201\n"
+        )
+        frames, data = render_preview_frames(csv_data, RenderConfig(fps=10, seconds_between_gps_points=1), frame_count=3)
+
+        self.assertEqual(len(frames), 3)
+        self.assertTrue(frames[0].startswith(b"\x89PNG"))
+        self.assertEqual(data.valid_rows, 2)
 
 
 if __name__ == "__main__":
