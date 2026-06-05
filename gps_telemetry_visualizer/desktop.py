@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import io
 import os
 import sys
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import pandas as pd
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QPixmap
@@ -25,6 +23,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QProgressBar,
+    QSlider,
     QSizePolicy,
     QSpinBox,
     QDoubleSpinBox,
@@ -38,8 +37,11 @@ from gps_telemetry_visualizer.core import (
     detect_columns,
     prepare_telemetry,
     render_animation,
-    render_static_preview,
+    render_preview_frames,
 )
+
+
+TIME_SLIDER_SCALE = 10
 
 
 class CsvDropZone(QFrame):
@@ -144,9 +146,13 @@ class MainWindow(QMainWindow):
         self.columns = []
         self.render_thread = None
         self.render_worker = None
+        self.preview_frames = []
+        self.preview_frame_index = 0
         self.preview_timer = QTimer(self)
         self.preview_timer.setSingleShot(True)
         self.preview_timer.timeout.connect(self.refresh_preview)
+        self.preview_playback_timer = QTimer(self)
+        self.preview_playback_timer.timeout.connect(self._advance_preview_frame)
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -163,7 +169,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self._build_preview_panel(), 0, 2)
 
         self._connect_preview_signals()
-        self._update_background_controls()
+        self._update_transparency_controls()
 
     def _build_file_panel(self) -> QWidget:
         panel = QWidget()
@@ -207,7 +213,7 @@ class MainWindow(QMainWindow):
 
         self.file_type = QComboBox()
         self.file_type.addItems(["mp4", "mov"])
-        self.file_type.currentTextChanged.connect(self._sync_output_name_extension)
+        self.file_type.currentTextChanged.connect(self._file_type_changed)
         layout.addWidget(QLabel("File type"))
         layout.addWidget(self.file_type)
 
@@ -274,6 +280,13 @@ class MainWindow(QMainWindow):
         self.seconds_between.setValue(1.0)
         _set_control_width(self.seconds_between)
         form.addRow("Seconds between GPS points", self.seconds_between)
+
+        self.start_time, self.start_time_label = _time_slider()
+        self.end_time, self.end_time_label = _time_slider()
+        self.start_time.valueChanged.connect(self._time_slider_changed)
+        self.end_time.valueChanged.connect(self._time_slider_changed)
+        form.addRow("Start time", _slider_row(self.start_time, self.start_time_label))
+        form.addRow("End time", _slider_row(self.end_time, self.end_time_label))
 
         self.auto_max_speed = QCheckBox("Auto max speed")
         self.auto_max_speed.setChecked(True)
@@ -364,6 +377,8 @@ class MainWindow(QMainWindow):
             self.speed_output_unit,
             self.fps,
             self.seconds_between,
+            self.start_time,
+            self.end_time,
             self.auto_max_speed,
             self.max_speed,
             self.file_type,
@@ -385,6 +400,8 @@ class MainWindow(QMainWindow):
             self.background_color,
         ]:
             button.color_changed.connect(self.schedule_preview)
+
+        self.seconds_between.valueChanged.connect(lambda _: self._refresh_time_range(reset=False))
 
     def browse_csv(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Choose CSV", str(Path.cwd()), "CSV files (*.csv)")
@@ -408,6 +425,7 @@ class MainWindow(QMainWindow):
             self._populate_combo(self.speed_col, detected.get("speed") or "GSpd(kmh)")
             self._populate_combo(self.heading_col, detected.get("heading") or "Hdg(°)")
             self._populate_combo(self.altitude_col, detected.get("altitude") or "Alt(m)")
+            self._refresh_time_range(reset=True)
             self.schedule_preview()
         except Exception as exc:
             QMessageBox.warning(self, "CSV Error", str(exc))
@@ -423,25 +441,105 @@ class MainWindow(QMainWindow):
         if self.csv_path:
             self.preview_timer.start(450)
 
+    def _show_preview_frame(self) -> None:
+        if not self.preview_frames:
+            return
+        pixmap = self.preview_frames[self.preview_frame_index]
+        scaled = pixmap.scaled(self.preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.preview.setPixmap(scaled)
+
+    def _advance_preview_frame(self) -> None:
+        if not self.preview_frames:
+            self.preview_playback_timer.stop()
+            return
+        self.preview_frame_index = (self.preview_frame_index + 1) % len(self.preview_frames)
+        self._show_preview_frame()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._show_preview_frame()
+
+    def _time_slider_changed(self) -> None:
+        if self.sender() is self.start_time and self.start_time.value() >= self.end_time.value():
+            if self.start_time.value() < self.start_time.maximum():
+                self.end_time.blockSignals(True)
+                self.end_time.setValue(self.start_time.value() + 1)
+                self.end_time.blockSignals(False)
+            else:
+                self.start_time.blockSignals(True)
+                self.start_time.setValue(max(self.start_time.minimum(), self.end_time.value() - 1))
+                self.start_time.blockSignals(False)
+        elif self.sender() is self.end_time and self.end_time.value() <= self.start_time.value():
+            if self.end_time.value() > self.end_time.minimum():
+                self.start_time.blockSignals(True)
+                self.start_time.setValue(self.end_time.value() - 1)
+                self.start_time.blockSignals(False)
+            else:
+                self.end_time.blockSignals(True)
+                self.end_time.setValue(min(self.end_time.maximum(), self.start_time.value() + 1))
+                self.end_time.blockSignals(False)
+
+        self._update_time_labels()
+        self.schedule_preview()
+
+    def _refresh_time_range(self, reset: bool) -> None:
+        if not self.csv_path:
+            return
+
+        try:
+            data = prepare_telemetry(self.csv_path, self._config(include_time=False))
+        except Exception:
+            return
+
+        max_tick = max(1, int(round(data.total_duration_seconds * TIME_SLIDER_SCALE)))
+        current_start = self.start_time.value()
+        current_end = self.end_time.value()
+        if reset or current_end <= 1:
+            current_start = 0
+            current_end = max_tick
+        else:
+            current_start = min(current_start, max_tick - 1)
+            current_end = min(max(current_end, current_start + 1), max_tick)
+
+        for slider, value in ((self.start_time, current_start), (self.end_time, current_end)):
+            slider.blockSignals(True)
+            slider.setRange(0, max_tick)
+            slider.setEnabled(data.total_duration_seconds > 0)
+            slider.setValue(value)
+            slider.blockSignals(False)
+
+        self._update_time_labels()
+
+    def _update_time_labels(self) -> None:
+        self.start_time_label.setText(_format_seconds(self.start_time.value() / TIME_SLIDER_SCALE))
+        self.end_time_label.setText(_format_seconds(self.end_time.value() / TIME_SLIDER_SCALE))
+
     def refresh_preview(self) -> None:
+        self.preview_playback_timer.stop()
+        self.preview_frames = []
+        self.preview_frame_index = 0
+
         if not self.csv_path:
             self.preview.setText("Select a CSV to preview.")
             return
 
         try:
-            data = prepare_telemetry(self.csv_path, self._config())
-            fig = render_static_preview(self.csv_path, self._config())
-            buffer = io.BytesIO()
-            fig.savefig(buffer, format="png", dpi=130)
-            plt.close(fig)
-            pixmap = QPixmap()
-            pixmap.loadFromData(buffer.getvalue(), "PNG")
-            scaled = pixmap.scaled(self.preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.preview.setPixmap(scaled)
+            frames, data = render_preview_frames(self.csv_path, self._config(), frame_count=30, dpi=105)
+            for frame in frames:
+                pixmap = QPixmap()
+                pixmap.loadFromData(frame, "PNG")
+                self.preview_frames.append(pixmap)
+
+            self._show_preview_frame()
+            if len(self.preview_frames) > 1:
+                self.preview_playback_timer.start(90)
+
             self.status.setText(
-                "{} valid GPS rows from {} total rows. Max speed: {:.1f} {}.".format(
+                "{} valid GPS rows from {} total rows. Previewing {} to {}. Max speed: {:.1f} {}.".format(
                     data.valid_rows,
                     data.source_rows,
+                    _format_seconds(data.start_time),
+                    _format_seconds(data.end_time),
                     data.max_speed,
                     self.speed_output_unit.currentText().upper(),
                 )
@@ -499,11 +597,33 @@ class MainWindow(QMainWindow):
         if not self.output_name.text().strip() or self.output_name.text().startswith("telemetry_"):
             self.output_name.setText(default_output_name(self.export_mode.currentText(), self.file_type.currentText()))
 
-    def _update_background_controls(self) -> None:
-        self.background_color.setVisible(not self.transparent.isChecked())
+    def _file_type_changed(self) -> None:
+        self._sync_output_name_extension()
+        self._update_transparency_controls()
         self.schedule_preview()
 
-    def _config(self) -> RenderConfig:
+    def _update_transparency_controls(self) -> None:
+        is_mov = self.file_type.currentText() == "mov"
+        if is_mov:
+            self.transparent.setEnabled(True)
+            self.transparent.setToolTip("MOV uses the ProRes 4444 codec, which supports alpha transparency.")
+        else:
+            self.transparent.blockSignals(True)
+            self.transparent.setChecked(False)
+            self.transparent.blockSignals(False)
+            self.transparent.setEnabled(False)
+            self.transparent.setToolTip("Transparent backgrounds are only available for MOV exports.")
+
+        self._update_background_controls()
+
+    def _update_background_controls(self) -> None:
+        self.background_color.setVisible(not (self.transparent.isEnabled() and self.transparent.isChecked()))
+        self.schedule_preview()
+
+    def _config(self, include_time: bool = True) -> RenderConfig:
+        transparent = self.file_type.currentText() == "mov" and self.transparent.isChecked()
+        start_time = self.start_time.value() / TIME_SLIDER_SCALE if include_time and self.start_time.isEnabled() else 0.0
+        end_time = self.end_time.value() / TIME_SLIDER_SCALE if include_time and self.end_time.isEnabled() else None
         return RenderConfig(
             export_mode=self.export_mode.currentText(),
             fps=self.fps.value(),
@@ -520,7 +640,9 @@ class MainWindow(QMainWindow):
             speedometer_color=self.speedometer_color.color,
             needle_color=self.needle_color.color,
             background_color=self.background_color.color,
-            transparent=self.transparent.isChecked(),
+            transparent=transparent,
+            start_time=start_time,
+            end_time=end_time,
         )
 
 
@@ -545,6 +667,36 @@ def _editable_combo(default: str) -> QComboBox:
 def _set_control_width(widget: QWidget) -> None:
     widget.setMinimumWidth(190)
     widget.setMaximumWidth(190)
+
+
+def _time_slider() -> tuple[QSlider, QLabel]:
+    slider = QSlider(Qt.Horizontal)
+    slider.setRange(0, 1)
+    slider.setEnabled(False)
+    slider.setMinimumWidth(190)
+    label = QLabel("0.0s")
+    label.setObjectName("muted")
+    label.setMinimumWidth(46)
+    label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    return slider, label
+
+
+def _slider_row(slider: QSlider, label: QLabel) -> QWidget:
+    row = QWidget()
+    layout = QHBoxLayout(row)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(8)
+    layout.addWidget(slider, 1)
+    layout.addWidget(label)
+    return row
+
+
+def _format_seconds(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    remaining = seconds - minutes * 60
+    if minutes:
+        return "{}:{:04.1f}".format(minutes, remaining)
+    return "{:.1f}s".format(remaining)
 
 
 def _with_extension(name: str, extension: str) -> str:
