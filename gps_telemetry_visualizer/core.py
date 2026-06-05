@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import io
 import math
 import os
 import re
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Iterable, Optional, Tuple
 
@@ -48,6 +49,8 @@ class RenderConfig:
     background_color: str = "#101820"
     transparent: bool = True
     padding: float = 10.0
+    start_time: float = 0.0
+    end_time: Optional[float] = None
 
 
 @dataclass
@@ -65,6 +68,9 @@ class TelemetryData:
     speed_col: Optional[str]
     heading_col: Optional[str]
     altitude_col: Optional[str]
+    total_duration_seconds: float
+    start_time: float
+    end_time: float
 
 
 ProgressCallback = Optional[Callable[[int, int], None]]
@@ -138,19 +144,11 @@ def prepare_telemetry(csv_source, config: RenderConfig) -> TelemetryData:
     else:
         df["speed_converted"] = 0.0
 
-    max_speed = _resolve_max_speed(df["speed_converted"], config.max_speed)
-
     lat0 = float(df["lat"].iloc[0])
     lon0 = float(df["lon"].iloc[0])
     meters_per_degree_lon = 111_320 * math.cos(math.radians(lat0))
     df["x"] = (df["lon"].astype(float) - lon0) * meters_per_degree_lon
     df["y"] = (df["lat"].astype(float) - lat0) * 110_540
-
-    padding = float(config.padding)
-    xmin = float(df["x"].min()) - padding
-    xmax = float(df["x"].max()) + padding
-    ymin = float(df["y"].min()) - padding
-    ymax = float(df["y"].max()) + padding
 
     frame_x, frame_y, frame_speed, frame_heading, frame_altitude = _smooth_frames(
         df,
@@ -159,6 +157,29 @@ def prepare_telemetry(csv_source, config: RenderConfig) -> TelemetryData:
         heading_col=heading_col,
         altitude_col=altitude_col,
     )
+    total_duration_seconds = max(0.0, (len(frame_x) - 1) / float(config.fps))
+    (
+        frame_x,
+        frame_y,
+        frame_speed,
+        frame_heading,
+        frame_altitude,
+        render_start_time,
+        render_end_time,
+    ) = _trim_frames(
+        frame_x,
+        frame_y,
+        frame_speed,
+        frame_heading,
+        frame_altitude,
+        fps=config.fps,
+        start_time=config.start_time,
+        end_time=config.end_time,
+        total_duration_seconds=total_duration_seconds,
+    )
+
+    max_speed = _resolve_max_speed(pd.Series(frame_speed), config.max_speed)
+    bounds = _frame_bounds(frame_x, frame_y, float(config.padding))
 
     return TelemetryData(
         frame_x=frame_x,
@@ -166,7 +187,7 @@ def prepare_telemetry(csv_source, config: RenderConfig) -> TelemetryData:
         frame_speed=frame_speed,
         frame_heading=frame_heading,
         frame_altitude=frame_altitude,
-        bounds=(xmin, xmax, ymin, ymax),
+        bounds=bounds,
         max_speed=max_speed,
         source_rows=source_rows,
         valid_rows=len(df),
@@ -174,6 +195,9 @@ def prepare_telemetry(csv_source, config: RenderConfig) -> TelemetryData:
         speed_col=speed_col,
         heading_col=heading_col,
         altitude_col=altitude_col,
+        total_duration_seconds=total_duration_seconds,
+        start_time=render_start_time,
+        end_time=render_end_time,
     )
 
 
@@ -194,9 +218,46 @@ def render_static_preview(csv_source, config: RenderConfig, frame_fraction: floa
     return fig
 
 
-def render_animation(csv_source, output_path, config: RenderConfig, progress_callback: ProgressCallback = None) -> Path:
+def render_preview_frames(csv_source, config: RenderConfig, frame_count: int = 28, dpi: int = 110) -> Tuple[list[bytes], TelemetryData]:
     data = prepare_telemetry(csv_source, config)
+    fig, ax_map, ax_speed = _build_figure(data, config)
+    trail_line = dot = None
+    if ax_map is not None:
+        trail_line, dot = _setup_map_artists(ax_map, data, config)
+
+    frame_count = max(1, min(int(frame_count), len(data.frame_x)))
+    frame_indexes = np.linspace(0, len(data.frame_x) - 1, frame_count, dtype=int)
+    rendered_frames = []
+
+    for frame in frame_indexes:
+        if ax_map is not None:
+            trail_line.set_data(data.frame_x[: frame + 1], data.frame_y[: frame + 1])
+            dot.set_data([data.frame_x[frame]], [data.frame_y[frame]])
+
+        if ax_speed is not None:
+            draw_speedometer(ax_speed, data.frame_speed[frame], data.max_speed, config)
+
+        fig.tight_layout(pad=0.2)
+        buffer = io.BytesIO()
+        fig.savefig(
+            buffer,
+            format="png",
+            dpi=dpi,
+            facecolor=fig.get_facecolor(),
+            transparent=config.transparent,
+        )
+        rendered_frames.append(buffer.getvalue())
+
+    plt.close(fig)
+    return rendered_frames, data
+
+
+def render_animation(csv_source, output_path, config: RenderConfig, progress_callback: ProgressCallback = None) -> Path:
     output = Path(output_path).expanduser().resolve()
+    if output.suffix.lower() != ".mov" and config.transparent:
+        config = replace(config, transparent=False)
+
+    data = prepare_telemetry(csv_source, config)
     output.parent.mkdir(parents=True, exist_ok=True)
 
     _configure_ffmpeg()
@@ -324,6 +385,10 @@ def _validate_config(config: RenderConfig) -> None:
         raise ValueError("fps must be greater than 0")
     if config.seconds_between_gps_points <= 0:
         raise ValueError("seconds_between_gps_points must be greater than 0")
+    if config.start_time < 0:
+        raise ValueError("start_time must be greater than or equal to 0")
+    if config.end_time is not None and config.end_time <= config.start_time:
+        raise ValueError("end_time must be greater than start_time")
     convert_speed(0, config.speed_input_unit, config.speed_output_unit)
 
 
@@ -364,6 +429,51 @@ def _resolve_max_speed(speed_series: pd.Series, requested_max_speed: Optional[fl
     if top_speed <= 0:
         return 5.0
     return float(max(5, int(math.ceil(top_speed / 5.0) * 5)))
+
+
+def _trim_frames(
+    frame_x: np.ndarray,
+    frame_y: np.ndarray,
+    frame_speed: np.ndarray,
+    frame_heading: np.ndarray,
+    frame_altitude: np.ndarray,
+    fps: int,
+    start_time: float,
+    end_time: Optional[float],
+    total_duration_seconds: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
+    if len(frame_x) <= 1 or total_duration_seconds <= 0:
+        return frame_x, frame_y, frame_speed, frame_heading, frame_altitude, 0.0, 0.0
+
+    start = min(max(0.0, float(start_time)), total_duration_seconds)
+    end = total_duration_seconds if end_time is None else min(float(end_time), total_duration_seconds)
+    if start >= total_duration_seconds:
+        raise ValueError("Start time must be before the end of the telemetry data.")
+    if end <= start:
+        raise ValueError("End time must be after start time.")
+
+    start_frame = max(0, min(len(frame_x) - 1, int(math.floor(start * fps))))
+    end_frame = max(start_frame, min(len(frame_x) - 1, int(math.ceil(end * fps))))
+    if end_frame == start_frame and end_frame < len(frame_x) - 1:
+        end_frame += 1
+
+    return (
+        frame_x[start_frame : end_frame + 1],
+        frame_y[start_frame : end_frame + 1],
+        frame_speed[start_frame : end_frame + 1],
+        frame_heading[start_frame : end_frame + 1],
+        frame_altitude[start_frame : end_frame + 1],
+        start_frame / float(fps),
+        end_frame / float(fps),
+    )
+
+
+def _frame_bounds(frame_x: np.ndarray, frame_y: np.ndarray, padding: float) -> Tuple[float, float, float, float]:
+    xmin = float(np.min(frame_x)) - padding
+    xmax = float(np.max(frame_x)) + padding
+    ymin = float(np.min(frame_y)) - padding
+    ymax = float(np.max(frame_y)) + padding
+    return xmin, xmax, ymin, ymax
 
 
 def _smooth_frames(
