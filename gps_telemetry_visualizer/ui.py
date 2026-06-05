@@ -92,6 +92,37 @@ def run_app() -> None:
         auto_max_speed = st.checkbox("Auto max speed", value=True)
         max_speed = None if auto_max_speed else st.number_input("Max speed", min_value=1.0, value=60.0, step=5.0)
 
+        duration_seconds = 0.0
+        if uploaded_file is not None:
+            try:
+                duration_source = _uploaded_bytes(uploaded_file)
+                duration_config = RenderConfig(
+                    export_mode=export_mode,
+                    fps=fps,
+                    seconds_between_gps_points=seconds_between,
+                    gps_col=gps_col,
+                    speed_col=speed_col,
+                    heading_col=heading_col,
+                    altitude_col=altitude_col,
+                    speed_input_unit=speed_input_unit,
+                    speed_output_unit=speed_output_unit,
+                    max_speed=max_speed,
+                    transparent=False,
+                )
+                duration_seconds = prepare_telemetry(io.BytesIO(duration_source), duration_config).total_duration_seconds
+            except Exception:
+                duration_seconds = 0.0
+
+        range_max = max(0.1, duration_seconds)
+        time_range = st.slider(
+            "Render time range",
+            min_value=0.0,
+            max_value=float(range_max),
+            value=(0.0, float(range_max if duration_seconds <= 0 else duration_seconds)),
+            step=0.1 if range_max <= 300 else 1.0,
+            disabled=uploaded_file is None or duration_seconds <= 0,
+        )
+
         color_row_1, color_row_2 = st.columns(2)
         with color_row_1:
             path_color = st.color_picker("Path", "#00d5ff")
@@ -100,7 +131,13 @@ def run_app() -> None:
             dot_color = st.color_picker("Position dot", "#ff3355")
             needle_color = st.color_picker("Needle", "#ff3355")
 
-        transparent = st.checkbox("Transparent background", value=(output_type == "mov"))
+        transparent = st.checkbox(
+            "Transparent background",
+            value=(output_type == "mov"),
+            disabled=(output_type == "mp4"),
+            help="Transparent backgrounds are only available for MOV exports.",
+        )
+        transparent = transparent and output_type == "mov"
         background_color = "#101820"
         if not transparent:
             background_color = st.color_picker("Background", background_color)
@@ -124,6 +161,8 @@ def run_app() -> None:
             needle_color=needle_color,
             background_color=background_color,
             transparent=transparent,
+            start_time=float(time_range[0]) if uploaded_file is not None else 0.0,
+            end_time=float(time_range[1]) if uploaded_file is not None and duration_seconds > 0 else None,
         )
 
         create_clicked = st.button("Create", type="primary", use_container_width=True)
