@@ -4,7 +4,9 @@ import io
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -92,37 +94,6 @@ def run_app() -> None:
         auto_max_speed = st.checkbox("Auto max speed", value=True)
         max_speed = None if auto_max_speed else st.number_input("Max speed", min_value=1.0, value=60.0, step=5.0)
 
-        duration_seconds = 0.0
-        if uploaded_file is not None:
-            try:
-                duration_source = _uploaded_bytes(uploaded_file)
-                duration_config = RenderConfig(
-                    export_mode=export_mode,
-                    fps=fps,
-                    seconds_between_gps_points=seconds_between,
-                    gps_col=gps_col,
-                    speed_col=speed_col,
-                    heading_col=heading_col,
-                    altitude_col=altitude_col,
-                    speed_input_unit=speed_input_unit,
-                    speed_output_unit=speed_output_unit,
-                    max_speed=max_speed,
-                    transparent=False,
-                )
-                duration_seconds = prepare_telemetry(io.BytesIO(duration_source), duration_config).total_duration_seconds
-            except Exception:
-                duration_seconds = 0.0
-
-        range_max = max(0.1, duration_seconds)
-        time_range = st.slider(
-            "Render time range",
-            min_value=0.0,
-            max_value=float(range_max),
-            value=(0.0, float(range_max if duration_seconds <= 0 else duration_seconds)),
-            step=0.1 if range_max <= 300 else 1.0,
-            disabled=uploaded_file is None or duration_seconds <= 0,
-        )
-
         color_row_1, color_row_2 = st.columns(2)
         with color_row_1:
             path_color = st.color_picker("Path", "#00d5ff")
@@ -144,7 +115,7 @@ def run_app() -> None:
 
         output_name = st.text_input("Output file name", value=default_output_name(export_mode, output_type))
 
-        config = RenderConfig(
+        base_config = RenderConfig(
             export_mode=export_mode,
             fps=fps,
             seconds_between_gps_points=seconds_between,
@@ -161,33 +132,49 @@ def run_app() -> None:
             needle_color=needle_color,
             background_color=background_color,
             transparent=transparent,
-            start_time=float(time_range[0]) if uploaded_file is not None else 0.0,
-            end_time=float(time_range[1]) if uploaded_file is not None and duration_seconds > 0 else None,
         )
 
         create_clicked = st.button("Create", type="primary", use_container_width=True)
 
+    config = base_config
+
     with preview_col:
         st.subheader("Preview")
+        preview_slot = st.empty()
+
         if uploaded_file is None:
-            st.info("Upload a CSV to preview the map and speedometer.")
+            preview_slot.info("Upload a CSV to preview the map and speedometer.")
         else:
             try:
                 preview_source = _uploaded_bytes(uploaded_file)
+                duration_config = replace(base_config, start_time=0.0, end_time=None)
+                duration_data = prepare_telemetry(io.BytesIO(preview_source), duration_config)
+                trim_start, trim_end, playhead_time = _timeline_controls(
+                    st,
+                    duration_data.total_duration_seconds,
+                    "{}:{:.3f}".format(uploaded_file.name, duration_data.total_duration_seconds),
+                )
+
+                config = replace(base_config, start_time=trim_start, end_time=trim_end)
                 data = prepare_telemetry(io.BytesIO(preview_source), config)
+                preview_time = max(0.0, playhead_time - trim_start)
+                fig = render_static_preview(io.BytesIO(preview_source), config, frame_time=preview_time)
+                preview_slot.pyplot(fig, clear_figure=True, use_container_width=True)
+                plt.close(fig)
+
                 st.caption(
-                    "{} valid GPS rows from {} total rows. Max speed: {:.1f} {}.".format(
+                    "{} valid GPS rows from {} total rows. Previewing {}. Export trim: {} to {}. Max speed: {:.1f} {}.".format(
                         data.valid_rows,
                         data.source_rows,
+                        _format_seconds(playhead_time),
+                        _format_seconds(trim_start),
+                        _format_seconds(data.end_time),
                         data.max_speed,
                         config.speed_output_unit.upper(),
                     )
                 )
-                fig = render_static_preview(io.BytesIO(preview_source), config)
-                st.pyplot(fig, clear_figure=True, use_container_width=True)
-                plt.close(fig)
             except Exception as exc:
-                st.error(str(exc))
+                preview_slot.error(str(exc))
 
     if create_clicked:
         if uploaded_file is None:
@@ -216,6 +203,89 @@ def _uploaded_bytes(uploaded_file) -> bytes:
     data = uploaded_file.read()
     uploaded_file.seek(0)
     return data
+
+
+def _timeline_controls(st, duration_seconds: float, timeline_id: str) -> tuple[float, Optional[float], float]:
+    duration = max(0.0, float(duration_seconds))
+    range_max = max(0.1, duration)
+    step = _time_step(range_max)
+
+    if st.session_state.get("timeline_id") != timeline_id:
+        st.session_state.timeline_id = timeline_id
+        st.session_state.preview_playhead_time = 0.0
+        st.session_state.trim_start_time = 0.0
+        st.session_state.trim_end_time = duration
+
+    trim_start = _clamp_time(st.session_state.get("trim_start_time", 0.0), 0.0, range_max)
+    trim_end = _clamp_time(st.session_state.get("trim_end_time", duration), 0.0, range_max)
+    if trim_end <= trim_start:
+        trim_start = 0.0
+        trim_end = range_max
+    playhead_time = _clamp_time(st.session_state.get("preview_playhead_time", trim_start), trim_start, trim_end)
+
+    st.markdown("#### Timeline")
+    playhead_time = st.slider(
+        "Preview position",
+        min_value=0.0,
+        max_value=float(range_max),
+        value=float(playhead_time),
+        step=step,
+        disabled=duration <= 0,
+        help="Scrub the preview frame without changing the export range.",
+    )
+    trim_start, trim_end = st.slider(
+        "Trim start / end",
+        min_value=0.0,
+        max_value=float(range_max),
+        value=(float(trim_start), float(trim_end)),
+        step=step,
+        disabled=duration <= 0,
+        help="Only this selected range is rendered when you click Create.",
+    )
+
+    trim_start = _clamp_time(trim_start, 0.0, range_max)
+    trim_end = _clamp_time(trim_end, trim_start, range_max)
+    if duration > 0 and trim_end <= trim_start:
+        if trim_start + step <= range_max:
+            trim_end = trim_start + step
+        else:
+            trim_start = max(0.0, trim_end - step)
+    playhead_time = _clamp_time(playhead_time, trim_start, trim_end)
+
+    st.session_state.preview_playhead_time = playhead_time
+    st.session_state.trim_start_time = trim_start
+    st.session_state.trim_end_time = trim_end
+
+    st.caption(
+        "Playhead {} | Trim {} to {}".format(
+            _format_seconds(playhead_time),
+            _format_seconds(trim_start),
+            _format_seconds(trim_end),
+        )
+    )
+
+    return trim_start, (trim_end if duration > 0 else None), playhead_time
+
+
+def _clamp_time(value: float, lower: float, upper: float) -> float:
+    return min(max(float(value), float(lower)), float(upper))
+
+
+def _time_step(duration_seconds: float) -> float:
+    if duration_seconds <= 180:
+        return 0.1
+    if duration_seconds <= 900:
+        return 0.5
+    return 1.0
+
+
+def _format_seconds(seconds: float) -> str:
+    seconds = max(0.0, float(seconds))
+    minutes = int(seconds // 60)
+    remaining = seconds - minutes * 60
+    if minutes:
+        return "{}:{:04.1f}".format(minutes, remaining)
+    return "{:.1f}s".format(remaining)
 
 
 def _column_select(st, label: str, columns: list, detected: str) -> str:
