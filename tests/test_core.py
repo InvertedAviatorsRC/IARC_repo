@@ -1,7 +1,16 @@
 import io
 import unittest
 
-from gps_telemetry_visualizer.core import RenderConfig, convert_speed, parse_gps, prepare_telemetry, render_preview_frames
+import matplotlib.pyplot as plt
+
+from gps_telemetry_visualizer.core import (
+    RenderConfig,
+    convert_speed,
+    parse_gps,
+    prepare_telemetry,
+    render_preview_frames,
+    render_static_preview,
+)
 
 
 class CoreTests(unittest.TestCase):
@@ -56,6 +65,17 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(len(frames), 3)
         self.assertTrue(frames[0].startswith(b"\x89PNG"))
         self.assertEqual(data.valid_rows, 2)
+
+    def test_render_static_preview_accepts_frame_time(self):
+        csv_data = io.StringIO(
+            "GPS,GSpd(kmh),Hdg(°),Alt(m)\n"
+            "44.0 -93.0,0,0,200\n"
+            "44.0001 -93.0001,36,10,201\n"
+        )
+        fig = render_static_preview(csv_data, RenderConfig(fps=10, seconds_between_gps_points=1), frame_time=0.5)
+
+        self.assertGreater(len(fig.axes), 0)
+        plt.close(fig)
 
 
 if __name__ == "__main__":
