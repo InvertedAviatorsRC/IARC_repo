@@ -201,10 +201,14 @@ def prepare_telemetry(csv_source, config: RenderConfig) -> TelemetryData:
     )
 
 
-def render_static_preview(csv_source, config: RenderConfig, frame_fraction: float = 0.65):
+def render_static_preview(csv_source, config: RenderConfig, frame_fraction: float = 0.65, frame_time: Optional[float] = None):
     data = prepare_telemetry(csv_source, config)
     fig, ax_map, ax_speed = _build_figure(data, config)
-    frame = max(0, min(len(data.frame_x) - 1, int(len(data.frame_x) * frame_fraction)))
+    if frame_time is None:
+        frame = int(len(data.frame_x) * frame_fraction)
+    else:
+        frame = int(round(max(0.0, frame_time) * config.fps))
+    frame = max(0, min(len(data.frame_x) - 1, frame))
 
     if ax_map is not None:
         line, dot = _setup_map_artists(ax_map, data, config)
