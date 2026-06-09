@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import os
 import sys
+import io
+from dataclasses import replace
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import pandas as pd
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QPixmap
@@ -37,7 +40,7 @@ from gps_telemetry_visualizer.core import (
     detect_columns,
     prepare_telemetry,
     render_animation,
-    render_preview_frames,
+    render_static_preview,
 )
 
 
@@ -281,13 +284,6 @@ class MainWindow(QMainWindow):
         _set_control_width(self.seconds_between)
         form.addRow("Seconds between GPS points", self.seconds_between)
 
-        self.start_time, self.start_time_label = _time_slider()
-        self.end_time, self.end_time_label = _time_slider()
-        self.start_time.valueChanged.connect(self._time_slider_changed)
-        self.end_time.valueChanged.connect(self._time_slider_changed)
-        form.addRow("Start time", _slider_row(self.start_time, self.start_time_label))
-        form.addRow("End time", _slider_row(self.end_time, self.end_time_label))
-
         self.auto_max_speed = QCheckBox("Auto max speed")
         self.auto_max_speed.setChecked(True)
         self.auto_max_speed.toggled.connect(lambda checked: self.max_speed.setEnabled(not checked))
@@ -321,6 +317,23 @@ class MainWindow(QMainWindow):
         self.preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.preview.setObjectName("preview")
         layout.addWidget(self.preview, 1)
+
+        timeline_title = QLabel("Timeline")
+        timeline_title.setObjectName("subsectionTitle")
+        layout.addWidget(timeline_title)
+
+        self.playhead_time, self.playhead_time_label = _time_slider()
+        self.start_time, self.start_time_label = _time_slider()
+        self.end_time, self.end_time_label = _time_slider()
+        self.playhead_time.setToolTip("Scrub the preview frame without changing the export range.")
+        self.start_time.setToolTip("Set where the rendered export should start.")
+        self.end_time.setToolTip("Set where the rendered export should end.")
+        self.playhead_time.valueChanged.connect(self._time_slider_changed)
+        self.start_time.valueChanged.connect(self._time_slider_changed)
+        self.end_time.valueChanged.connect(self._time_slider_changed)
+        layout.addWidget(_labeled_slider_row("Preview position", self.playhead_time, self.playhead_time_label))
+        layout.addWidget(_labeled_slider_row("Trim start", self.start_time, self.start_time_label))
+        layout.addWidget(_labeled_slider_row("Trim end", self.end_time, self.end_time_label))
 
         colors_title = QLabel("Colors")
         colors_title.setObjectName("subsectionTitle")
@@ -377,6 +390,7 @@ class MainWindow(QMainWindow):
             self.speed_output_unit,
             self.fps,
             self.seconds_between,
+            self.playhead_time,
             self.start_time,
             self.end_time,
             self.auto_max_speed,
@@ -460,7 +474,8 @@ class MainWindow(QMainWindow):
         self._show_preview_frame()
 
     def _time_slider_changed(self) -> None:
-        if self.sender() is self.start_time and self.start_time.value() >= self.end_time.value():
+        sender = self.sender()
+        if sender is self.start_time and self.start_time.value() >= self.end_time.value():
             if self.start_time.value() < self.start_time.maximum():
                 self.end_time.blockSignals(True)
                 self.end_time.setValue(self.start_time.value() + 1)
@@ -469,7 +484,7 @@ class MainWindow(QMainWindow):
                 self.start_time.blockSignals(True)
                 self.start_time.setValue(max(self.start_time.minimum(), self.end_time.value() - 1))
                 self.start_time.blockSignals(False)
-        elif self.sender() is self.end_time and self.end_time.value() <= self.start_time.value():
+        elif sender is self.end_time and self.end_time.value() <= self.start_time.value():
             if self.end_time.value() > self.end_time.minimum():
                 self.start_time.blockSignals(True)
                 self.start_time.setValue(self.end_time.value() - 1)
@@ -494,14 +509,21 @@ class MainWindow(QMainWindow):
         max_tick = max(1, int(round(data.total_duration_seconds * TIME_SLIDER_SCALE)))
         current_start = self.start_time.value()
         current_end = self.end_time.value()
+        current_playhead = self.playhead_time.value()
         if reset or current_end <= 1:
             current_start = 0
             current_end = max_tick
+            current_playhead = 0
         else:
             current_start = min(current_start, max_tick - 1)
             current_end = min(max(current_end, current_start + 1), max_tick)
+            current_playhead = min(current_playhead, max_tick)
 
-        for slider, value in ((self.start_time, current_start), (self.end_time, current_end)):
+        for slider, value in (
+            (self.playhead_time, current_playhead),
+            (self.start_time, current_start),
+            (self.end_time, current_end),
+        ):
             slider.blockSignals(True)
             slider.setRange(0, max_tick)
             slider.setEnabled(data.total_duration_seconds > 0)
@@ -511,6 +533,7 @@ class MainWindow(QMainWindow):
         self._update_time_labels()
 
     def _update_time_labels(self) -> None:
+        self.playhead_time_label.setText(_format_seconds(self.playhead_time.value() / TIME_SLIDER_SCALE))
         self.start_time_label.setText(_format_seconds(self.start_time.value() / TIME_SLIDER_SCALE))
         self.end_time_label.setText(_format_seconds(self.end_time.value() / TIME_SLIDER_SCALE))
 
@@ -524,20 +547,32 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            frames, data = render_preview_frames(self.csv_path, self._config(), frame_count=30, dpi=105)
-            for frame in frames:
-                pixmap = QPixmap()
-                pixmap.loadFromData(frame, "PNG")
-                self.preview_frames.append(pixmap)
+            render_config = self._config()
+            data = prepare_telemetry(self.csv_path, render_config)
+            preview_config = replace(self._config(include_time=False), max_speed=data.max_speed)
+            preview_time = self.playhead_time.value() / TIME_SLIDER_SCALE
+            fig = render_static_preview(self.csv_path, preview_config, frame_time=preview_time)
+            buffer = io.BytesIO()
+            fig.savefig(
+                buffer,
+                format="png",
+                dpi=105,
+                facecolor=fig.get_facecolor(),
+                transparent=preview_config.transparent,
+            )
+            plt.close(fig)
+
+            pixmap = QPixmap()
+            pixmap.loadFromData(buffer.getvalue(), "PNG")
+            self.preview_frames.append(pixmap)
 
             self._show_preview_frame()
-            if len(self.preview_frames) > 1:
-                self.preview_playback_timer.start(90)
 
             self.status.setText(
-                "{} valid GPS rows from {} total rows. Previewing {} to {}. Max speed: {:.1f} {}.".format(
+                "{} valid GPS rows from {} total rows. Previewing {}. Export trim: {} to {}. Max speed: {:.1f} {}.".format(
                     data.valid_rows,
                     data.source_rows,
+                    _format_seconds(self.playhead_time.value() / TIME_SLIDER_SCALE),
                     _format_seconds(data.start_time),
                     _format_seconds(data.end_time),
                     data.max_speed,
@@ -681,11 +716,15 @@ def _time_slider() -> tuple[QSlider, QLabel]:
     return slider, label
 
 
-def _slider_row(slider: QSlider, label: QLabel) -> QWidget:
+def _labeled_slider_row(title: str, slider: QSlider, label: QLabel) -> QWidget:
     row = QWidget()
     layout = QHBoxLayout(row)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(8)
+    title_label = QLabel(title)
+    title_label.setObjectName("muted")
+    title_label.setMinimumWidth(104)
+    layout.addWidget(title_label)
     layout.addWidget(slider, 1)
     layout.addWidget(label)
     return row
