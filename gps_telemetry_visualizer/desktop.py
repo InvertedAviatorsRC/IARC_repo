@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import sys
 import io
-from dataclasses import replace
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -494,6 +493,12 @@ class MainWindow(QMainWindow):
                 self.end_time.setValue(min(self.end_time.maximum(), self.start_time.value() + 1))
                 self.end_time.blockSignals(False)
 
+        clamped_playhead = min(max(self.playhead_time.value(), self.start_time.value()), self.end_time.value())
+        if clamped_playhead != self.playhead_time.value():
+            self.playhead_time.blockSignals(True)
+            self.playhead_time.setValue(clamped_playhead)
+            self.playhead_time.blockSignals(False)
+
         self._update_time_labels()
         self.schedule_preview()
 
@@ -517,7 +522,7 @@ class MainWindow(QMainWindow):
         else:
             current_start = min(current_start, max_tick - 1)
             current_end = min(max(current_end, current_start + 1), max_tick)
-            current_playhead = min(current_playhead, max_tick)
+            current_playhead = min(max(current_playhead, current_start), current_end)
 
         for slider, value in (
             (self.playhead_time, current_playhead),
@@ -549,16 +554,16 @@ class MainWindow(QMainWindow):
         try:
             render_config = self._config()
             data = prepare_telemetry(self.csv_path, render_config)
-            preview_config = replace(self._config(include_time=False), max_speed=data.max_speed)
             preview_time = self.playhead_time.value() / TIME_SLIDER_SCALE
-            fig = render_static_preview(self.csv_path, preview_config, frame_time=preview_time)
+            preview_time = min(max(preview_time, data.start_time), data.end_time) - data.start_time
+            fig = render_static_preview(self.csv_path, render_config, frame_time=preview_time)
             buffer = io.BytesIO()
             fig.savefig(
                 buffer,
                 format="png",
                 dpi=105,
                 facecolor=fig.get_facecolor(),
-                transparent=preview_config.transparent,
+                transparent=render_config.transparent,
             )
             plt.close(fig)
 
