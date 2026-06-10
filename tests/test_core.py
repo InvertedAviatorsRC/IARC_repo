@@ -77,6 +77,34 @@ class CoreTests(unittest.TestCase):
         self.assertGreater(len(fig.axes), 0)
         plt.close(fig)
 
+    def test_render_static_preview_uses_trimmed_path(self):
+        csv_text = (
+            "GPS,GSpd(kmh),Hdg(°),Alt(m)\n"
+            "44.0 -93.0,0,0,200\n"
+            "44.0001 -93.0001,12,10,201\n"
+            "44.0002 -93.0002,24,20,202\n"
+            "44.0003 -93.0003,36,30,203\n"
+        )
+        config = RenderConfig(
+            export_mode="map",
+            fps=10,
+            seconds_between_gps_points=1,
+            start_time=1.0,
+            end_time=2.0,
+        )
+        data = prepare_telemetry(io.StringIO(csv_text), config)
+        fig = render_static_preview(io.StringIO(csv_text), config, frame_time=99.0)
+
+        x_data = list(fig.axes[0].lines[0].get_xdata())
+        y_data = list(fig.axes[0].lines[0].get_ydata())
+
+        self.assertEqual(len(x_data), len(data.frame_x))
+        self.assertAlmostEqual(x_data[0], data.frame_x[0])
+        self.assertAlmostEqual(y_data[0], data.frame_y[0])
+        self.assertNotAlmostEqual(x_data[0], 0.0)
+        self.assertNotAlmostEqual(y_data[0], 0.0)
+        plt.close(fig)
+
 
 if __name__ == "__main__":
     unittest.main()
