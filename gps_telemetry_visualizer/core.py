@@ -28,6 +28,7 @@ from matplotlib.colors import to_rgba
 VALID_EXPORT_MODES = ("map", "speedometer", "both")
 VALID_SPEED_UNITS = ("kmh", "mph", "ms")
 LAYOUT_ELEMENT_NAMES = ("map", "speedometer", "top_speed", "furthest_distance")
+MIN_ELEMENT_SCALE = 0.1
 SPEED_RECORD_THRESHOLDS = {
     "mph": 0.5,
     "kmh": 0.804672,
@@ -117,6 +118,7 @@ class ElementLayout:
     x: float
     y: float
     visible: bool = True
+    scale: float = 1.0
 
 
 @dataclass
@@ -135,6 +137,7 @@ class ElementBounds:
     width: float
     height: float
     visible: bool = True
+    scale: float = 1.0
 
     @property
     def left(self) -> float:
@@ -407,13 +410,24 @@ def resolve_overlay_layout(config: RenderConfig) -> OverlayLayout:
 
 def clone_overlay_layout(layout: OverlayLayout) -> OverlayLayout:
     return OverlayLayout(
-        map=ElementLayout(layout.map.x, layout.map.y, layout.map.visible),
-        speedometer=ElementLayout(layout.speedometer.x, layout.speedometer.y, layout.speedometer.visible),
-        top_speed=ElementLayout(layout.top_speed.x, layout.top_speed.y, layout.top_speed.visible),
+        map=ElementLayout(layout.map.x, layout.map.y, layout.map.visible, _normalized_scale(layout.map.scale)),
+        speedometer=ElementLayout(
+            layout.speedometer.x,
+            layout.speedometer.y,
+            layout.speedometer.visible,
+            _normalized_scale(layout.speedometer.scale),
+        ),
+        top_speed=ElementLayout(
+            layout.top_speed.x,
+            layout.top_speed.y,
+            layout.top_speed.visible,
+            _normalized_scale(layout.top_speed.scale),
+        ),
         furthest_distance=ElementLayout(
             layout.furthest_distance.x,
             layout.furthest_distance.y,
             layout.furthest_distance.visible,
+            _normalized_scale(layout.furthest_distance.scale),
         ),
     )
 
@@ -429,6 +443,7 @@ def scale_overlay_layout(layout: OverlayLayout, old_width: int, old_height: int,
             element.x / old_width * new_width,
             element.y / old_height * new_height,
             element.visible,
+            _normalized_scale(element.scale),
         )
 
     return OverlayLayout(
@@ -462,6 +477,7 @@ def overlay_layout_from_dict(value: object, width: int, height: int, export_mode
             float(raw.get("x", raw.get("center_x", default_element.x))),
             float(raw.get("y", raw.get("center_y", default_element.y))),
             bool(raw.get("visible", default_element.visible)),
+            _normalized_scale(raw.get("scale", default_element.scale)),
         )
 
     return OverlayLayout(
@@ -477,7 +493,16 @@ def compute_element_bounds(name: str, layout: OverlayLayout, canvas: CanvasConfi
         raise ValueError("Unknown layout element: {}".format(name))
     element = getattr(layout, name)
     width, height = _element_size(name, canvas)
-    return ElementBounds(name, float(element.x), float(element.y), float(width), float(height), bool(element.visible))
+    scale = _normalized_scale(element.scale)
+    return ElementBounds(
+        name,
+        float(element.x),
+        float(element.y),
+        float(width) * scale,
+        float(height) * scale,
+        bool(element.visible),
+        scale,
+    )
 
 
 def compute_layout_bounds(layout: OverlayLayout, canvas: CanvasConfig, config: Optional[RenderConfig] = None) -> dict[str, ElementBounds]:
@@ -511,6 +536,12 @@ def layout_warnings(layout: OverlayLayout, canvas: CanvasConfig, config: Optiona
             warnings.append("{} is completely outside the output frame and will not appear in the rendered video.".format(label))
         elif visibility == "partial":
             warnings.append("{} is partially outside the output frame and will be cropped.".format(label))
+        if (
+            box.width > canvas.width * 2
+            or box.height > canvas.height * 2
+            or box.width * box.height > canvas.width * canvas.height * 3
+        ):
+            warnings.append("{} is significantly larger than the output frame and will be heavily cropped.".format(label))
 
     for index, first in enumerate(visible_bounds):
         for second in visible_bounds[index + 1 :]:
@@ -518,6 +549,47 @@ def layout_warnings(layout: OverlayLayout, canvas: CanvasConfig, config: Optiona
                 warnings.append("{} overlaps {}.".format(_element_label(first.name), _element_label(second.name).lower()))
 
     return warnings
+
+
+def resize_layout_element_from_corner(
+    layout: OverlayLayout,
+    name: str,
+    canvas: CanvasConfig,
+    corner: str,
+    dragged_x: float,
+    dragged_y: float,
+    config: Optional[RenderConfig] = None,
+) -> OverlayLayout:
+    """Resize one element uniformly while keeping the opposite corner fixed."""
+    if name not in LAYOUT_ELEMENT_NAMES:
+        raise ValueError("Unknown layout element: {}".format(name))
+    if corner not in ("top_left", "top_right", "bottom_left", "bottom_right"):
+        raise ValueError("corner must be one of: top_left, top_right, bottom_left, bottom_right")
+
+    current = compute_element_bounds(name, layout, canvas, config)
+    base_width, base_height = _element_size(name, canvas)
+    fixed_x = current.right if "left" in corner else current.left
+    fixed_y = current.bottom if "top" in corner else current.top
+    sign_x = -1.0 if "left" in corner else 1.0
+    sign_y = -1.0 if "top" in corner else 1.0
+
+    target_width = max(0.0, sign_x * (float(dragged_x) - fixed_x))
+    target_height = max(0.0, sign_y * (float(dragged_y) - fixed_y))
+    scale = max(target_width / base_width, target_height / base_height, MIN_ELEMENT_SCALE)
+    scaled_width = base_width * scale
+    scaled_height = base_height * scale
+
+    dragged_corner_x = fixed_x + sign_x * scaled_width
+    dragged_corner_y = fixed_y + sign_y * scaled_height
+    resized_element = ElementLayout(
+        (fixed_x + dragged_corner_x) / 2.0,
+        (fixed_y + dragged_corner_y) / 2.0,
+        getattr(layout, name).visible,
+        scale,
+    )
+    resized = clone_overlay_layout(layout)
+    setattr(resized, name, resized_element)
+    return resized
 
 
 def render_static_preview(csv_source, config: RenderConfig, frame_fraction: float = 0.65, frame_time: Optional[float] = None):
@@ -603,6 +675,7 @@ def draw_speedometer(
     state: Optional[FrameVisualState] = None,
     show_top_speed: bool = True,
 ) -> None:
+    element_scale = _axis_element_scale(ax)
     ax.clear()
     ax.set_aspect("equal")
     ax.axis("off")
@@ -616,7 +689,7 @@ def draw_speedometer(
         2,
         theta1=20,
         theta2=160,
-        linewidth=6,
+        linewidth=6 * element_scale,
         color=to_rgba(config.speedometer_color, 0.78),
     )
     ax.add_patch(arc)
@@ -632,14 +705,14 @@ def draw_speedometer(
         x_inner = 0.86 * math.cos(angle)
         y_inner = 0.86 * math.sin(angle)
 
-        ax.plot([x_inner, x_outer], [y_inner, y_outer], linewidth=2, color=to_rgba(config.text_color, 0.72))
+        ax.plot([x_inner, x_outer], [y_inner, y_outer], linewidth=2 * element_scale, color=to_rgba(config.text_color, 0.72))
         ax.text(
             0.7 * math.cos(angle),
             0.7 * math.sin(angle),
             str(int(round(tick))),
             ha="center",
             va="center",
-            fontsize=9,
+            fontsize=9 * element_scale,
             color=text_color,
         )
 
@@ -648,7 +721,7 @@ def draw_speedometer(
     ax.plot(
         [0, 0.78 * math.cos(needle_angle)],
         [0, 0.78 * math.sin(needle_angle)],
-        linewidth=4,
+        linewidth=4 * element_scale,
         color=to_rgba(config.needle_color, 1.0),
     )
 
@@ -659,7 +732,7 @@ def draw_speedometer(
         "{:.1f}".format(float(speed)),
         ha="center",
         va="center",
-        fontsize=28,
+        fontsize=28 * element_scale,
         color=to_rgba(config.text_color, 1.0),
         fontweight="bold",
     )
@@ -669,7 +742,7 @@ def draw_speedometer(
         format_speed_unit(config.speed_output_unit),
         ha="center",
         va="center",
-        fontsize=11,
+        fontsize=11 * element_scale,
         color=to_rgba(config.text_color, 0.75),
     )
 
@@ -873,17 +946,21 @@ def _build_composition(data: TelemetryData, config: RenderConfig) -> Tuple[objec
 
     if bounds["map"].visible:
         artists.ax_map = fig.add_axes(_bounds_to_axes_rect(bounds["map"], canvas))
+        artists.ax_map._element_scale = bounds["map"].scale
         artists.map_artists = _setup_map_artists(artists.ax_map, data, config)
 
     if bounds["speedometer"].visible:
         artists.ax_speedometer = fig.add_axes(_bounds_to_axes_rect(bounds["speedometer"], canvas))
+        artists.ax_speedometer._element_scale = bounds["speedometer"].scale
 
     if bounds["top_speed"].visible:
         artists.ax_top_speed = fig.add_axes(_bounds_to_axes_rect(bounds["top_speed"], canvas))
+        artists.ax_top_speed._element_scale = bounds["top_speed"].scale
         _configure_text_axis(artists.ax_top_speed, config)
 
     if bounds["furthest_distance"].visible:
         artists.ax_furthest_distance = fig.add_axes(_bounds_to_axes_rect(bounds["furthest_distance"], canvas))
+        artists.ax_furthest_distance._element_scale = bounds["furthest_distance"].scale
         _configure_text_axis(artists.ax_furthest_distance, config)
 
     return fig, artists
@@ -966,18 +1043,19 @@ def _configure_map_axis(ax_map, data: TelemetryData, config: RenderConfig) -> No
 
 def _setup_map_artists(ax_map, data: TelemetryData, config: RenderConfig):
     _configure_map_axis(ax_map, data, config)
-    trail_line, = ax_map.plot([], [], linewidth=4, color=to_rgba(config.path_color, 0.85), zorder=1)
+    element_scale = _axis_element_scale(ax_map)
+    trail_line, = ax_map.plot([], [], linewidth=4 * element_scale, color=to_rgba(config.path_color, 0.85), zorder=1)
     start_marker, = ax_map.plot(
         [data.frame_x[0]],
         [data.frame_y[0]],
         marker="*",
         linestyle="None",
-        markersize=20,
+        markersize=20 * element_scale,
         markeredgewidth=0,
         color=to_rgba(config.start_marker_color, 1.0),
         zorder=3,
     )
-    dot, = ax_map.plot([], [], "o", markersize=14, color=to_rgba(config.dot_color, 1.0), zorder=4)
+    dot, = ax_map.plot([], [], "o", markersize=14 * element_scale, color=to_rgba(config.dot_color, 1.0), zorder=4)
     return MapArtists(trail_line, start_marker, dot)
 
 
@@ -1032,7 +1110,9 @@ def _update_record_texts(title_text, value_text, title: str, value: str, highlig
 
 
 def _draw_record_indicator(ax, title: str, value: str, highlighted: bool, config: RenderConfig) -> list:
+    element_scale = _axis_element_scale(ax)
     ax.clear()
+    ax._element_scale = element_scale
     _configure_text_axis(ax, config)
     title_text = ax.text(
         0.5,
@@ -1040,7 +1120,7 @@ def _draw_record_indicator(ax, title: str, value: str, highlighted: bool, config
         title,
         ha="center",
         va="center",
-        fontsize=18,
+        fontsize=18 * element_scale,
         fontweight="bold",
         transform=ax.transAxes,
     )
@@ -1050,7 +1130,7 @@ def _draw_record_indicator(ax, title: str, value: str, highlighted: bool, config
         value,
         ha="center",
         va="center",
-        fontsize=30,
+        fontsize=30 * element_scale,
         fontweight="bold",
         transform=ax.transAxes,
     )
@@ -1071,7 +1151,26 @@ def _finalize_figure(fig) -> None:
 
 
 def _element_layout_to_dict(element: ElementLayout) -> dict:
-    return {"x": float(element.x), "y": float(element.y), "visible": bool(element.visible)}
+    return {
+        "x": float(element.x),
+        "y": float(element.y),
+        "visible": bool(element.visible),
+        "scale": _normalized_scale(element.scale),
+    }
+
+
+def _normalized_scale(value: object) -> float:
+    try:
+        parsed = float(value)
+    except Exception:
+        return 1.0
+    if not math.isfinite(parsed):
+        return 1.0
+    return max(MIN_ELEMENT_SCALE, parsed)
+
+
+def _axis_element_scale(ax) -> float:
+    return _normalized_scale(getattr(ax, "_element_scale", 1.0))
 
 
 def _element_size(name: str, canvas: CanvasConfig) -> Tuple[float, float]:

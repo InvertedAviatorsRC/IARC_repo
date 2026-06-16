@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QVBoxLayout,
@@ -36,6 +37,7 @@ from gps_telemetry_visualizer.core import (
     layout_warnings,
     prepare_telemetry,
     render_static_preview,
+    resize_layout_element_from_corner,
     scale_overlay_layout,
 )
 
@@ -124,8 +126,9 @@ class CompactColorControl(QWidget):
 
 
 class LayoutPreview(QLabel):
-    layout_changed = Signal(str, float, float)
+    layout_changed = Signal(str, float, float, float)
     selected_changed = Signal(str)
+    HANDLE_SIZE = 12
 
     def __init__(self) -> None:
         super().__init__("Select a CSV to preview.")
@@ -141,6 +144,8 @@ class LayoutPreview(QLabel):
         self._config = RenderConfig()
         self._selected = "map"
         self._dragging = False
+        self._drag_mode = "move"
+        self._resize_corner = None
 
     def set_preview(self, pixmap: QPixmap, layout: OverlayLayout, canvas: CanvasConfig, config: RenderConfig) -> None:
         self._pixmap = pixmap
@@ -191,29 +196,59 @@ class LayoutPreview(QLabel):
             painter.setPen(QColor("#e8edf3"))
             painter.drawText(label_rect.adjusted(6, 0, 0, 0), Qt.AlignLeft | Qt.AlignVCenter, LAYOUT_LABELS[name])
 
+            if selected:
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QColor("#22c55e"))
+                for handle in self._handle_rects(screen_rect).values():
+                    painter.drawRect(handle)
+
         painter.end()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if self._pixmap is None:
             return
         point = self._event_point(event)
+        handle = self._hit_handle(point)
+        if handle is not None:
+            self._dragging = True
+            self._drag_mode = "resize"
+            self._resize_corner = handle
+            self.selected_changed.emit(self._selected)
+            self._emit_resized_layout(point)
+            self.update()
+            return
+
         selected = self._hit_test(point)
         if selected is not None:
             self._selected = selected
             self._dragging = True
+            self._drag_mode = "move"
+            self._resize_corner = None
             self.selected_changed.emit(selected)
             x, y = self._output_point(point)
-            self.layout_changed.emit(selected, x, y)
+            scale = getattr(getattr(self._layout, selected), "scale", 1.0)
+            self.layout_changed.emit(selected, x, y, scale)
             self.update()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if not self._dragging or self._pixmap is None:
+        if self._pixmap is None:
             return
-        x, y = self._output_point(self._event_point(event))
-        self.layout_changed.emit(self._selected, x, y)
+        point = self._event_point(event)
+        if not self._dragging:
+            self._update_cursor(point)
+            return
+        if self._drag_mode == "resize":
+            self._emit_resized_layout(point)
+            return
+        x, y = self._output_point(point)
+        scale = getattr(getattr(self._layout, self._selected), "scale", 1.0)
+        self.layout_changed.emit(self._selected, x, y, scale)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self._dragging = False
+        self._drag_mode = "move"
+        self._resize_corner = None
+        self._update_cursor(self._event_point(event))
 
     def _hit_test(self, point: QPointF) -> str | None:
         bounds = compute_layout_bounds(self._layout, self._canvas, self._config)
@@ -222,6 +257,55 @@ class LayoutPreview(QLabel):
             if box.visible and self._screen_rect(box).contains(point):
                 return name
         return None
+
+    def _hit_handle(self, point: QPointF) -> str | None:
+        bounds = compute_layout_bounds(self._layout, self._canvas, self._config)
+        box = bounds.get(self._selected)
+        if box is None or not box.visible:
+            return None
+        for corner, rect in self._handle_rects(self._screen_rect(box)).items():
+            if rect.contains(point):
+                return corner
+        return None
+
+    def _handle_rects(self, screen_rect: QRectF) -> dict[str, QRectF]:
+        size = float(self.HANDLE_SIZE)
+        half = size / 2.0
+        points = {
+            "top_left": QPointF(screen_rect.left(), screen_rect.top()),
+            "top_right": QPointF(screen_rect.right(), screen_rect.top()),
+            "bottom_left": QPointF(screen_rect.left(), screen_rect.bottom()),
+            "bottom_right": QPointF(screen_rect.right(), screen_rect.bottom()),
+        }
+        return {
+            name: QRectF(point.x() - half, point.y() - half, size, size)
+            for name, point in points.items()
+        }
+
+    def _emit_resized_layout(self, point: QPointF) -> None:
+        x, y = self._output_point(point)
+        resized = resize_layout_element_from_corner(
+            self._layout,
+            self._selected,
+            self._canvas,
+            self._resize_corner or "bottom_right",
+            x,
+            y,
+            self._config,
+        )
+        element = getattr(resized, self._selected)
+        self.layout_changed.emit(self._selected, element.x, element.y, element.scale)
+
+    def _update_cursor(self, point: QPointF) -> None:
+        handle = self._hit_handle(point)
+        if handle in ("top_left", "bottom_right"):
+            self.setCursor(Qt.SizeFDiagCursor)
+        elif handle in ("top_right", "bottom_left"):
+            self.setCursor(Qt.SizeBDiagCursor)
+        elif self._hit_test(point) is not None:
+            self.setCursor(Qt.SizeAllCursor)
+        else:
+            self.unsetCursor()
 
     def _image_rect(self) -> QRectF:
         available_width = max(1.0, float(self.width()))
@@ -278,6 +362,8 @@ def apply_patch() -> None:
     desktop.MainWindow._build_controls_panel = _build_controls_panel
     desktop.MainWindow._build_file_group = _build_file_group
     desktop.MainWindow._build_export_group = _build_export_group
+    desktop.MainWindow._build_elements_group = _build_elements_group
+    desktop.MainWindow._build_colors_group = _build_colors_group
     desktop.MainWindow._build_advanced_group = _build_advanced_group
     desktop.MainWindow._build_preview_panel = _build_preview_panel
     desktop.MainWindow._add_layout_controls = _add_layout_controls
@@ -348,12 +434,17 @@ def _patched_init(self) -> None:
 
 
 def _build_controls_panel(self) -> QWidget:
+    scroll = QScrollArea()
+    scroll.setObjectName("panel")
+    scroll.setWidgetResizable(True)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    scroll.setMinimumWidth(390)
+    scroll.setMaximumWidth(520)
+    scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+
     panel = QWidget()
-    panel.setObjectName("panel")
-    panel.setMinimumWidth(340)
-    panel.setMaximumWidth(440)
     layout = QVBoxLayout(panel)
-    layout.setContentsMargins(14, 14, 14, 14)
+    layout.setContentsMargins(12, 12, 12, 12)
     layout.setSpacing(10)
 
     title = QLabel("Controls")
@@ -362,9 +453,12 @@ def _build_controls_panel(self) -> QWidget:
 
     layout.addWidget(CollapsibleSection("File", self._build_file_group(), expanded=True))
     layout.addWidget(CollapsibleSection("Export", self._build_export_group(), expanded=True))
+    layout.addWidget(CollapsibleSection("Elements", self._build_elements_group(), expanded=True))
+    layout.addWidget(CollapsibleSection("Colors", self._build_colors_group(), expanded=True))
     layout.addWidget(CollapsibleSection("Advanced settings", self._build_advanced_group(), expanded=False))
     layout.addStretch()
-    return panel
+    scroll.setWidget(panel)
+    return scroll
 
 
 def _build_file_group(self) -> QWidget:
@@ -458,6 +552,70 @@ def _build_export_group(self) -> QWidget:
     self.export_mode.setVisible(False)
     layout.addWidget(self.export_mode)
     self._resolution_changed()
+    return group
+
+
+def _build_elements_group(self) -> QWidget:
+    group = QWidget()
+    layout = QVBoxLayout(group)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(8)
+
+    self.selected_layout_label = QLabel("Selected: Map. Drag to move; use corner handles to resize.")
+    self.selected_layout_label.setObjectName("muted")
+    self.selected_layout_label.setWordWrap(True)
+    layout.addWidget(self.selected_layout_label)
+
+    layout_grid = QGridLayout()
+    layout_grid.setHorizontalSpacing(7)
+    layout_grid.setVerticalSpacing(5)
+    layout_grid.setColumnMinimumWidth(0, 106)
+    layout_grid.setColumnMinimumWidth(1, 38)
+    layout_grid.setColumnMinimumWidth(2, 82)
+    layout_grid.setColumnMinimumWidth(3, 82)
+    layout_grid.setColumnMinimumWidth(4, 78)
+    layout_grid.setColumnMinimumWidth(5, 62)
+    layout_grid.setColumnStretch(0, 2)
+    layout_grid.setColumnStretch(2, 1)
+    layout_grid.setColumnStretch(3, 1)
+    layout_grid.setColumnStretch(4, 1)
+    layout_grid.addWidget(QLabel("Element"), 0, 0)
+    layout_grid.addWidget(QLabel("Show"), 0, 1)
+    layout_grid.addWidget(QLabel("X"), 0, 2)
+    layout_grid.addWidget(QLabel("Y"), 0, 3)
+    layout_grid.addWidget(QLabel("Scale"), 0, 4)
+    for row, name in enumerate(LAYOUT_LABELS, start=1):
+        self._add_layout_controls(layout_grid, row, name)
+    layout.addLayout(layout_grid)
+
+    reset_layout = QPushButton("Reset layout")
+    reset_layout.clicked.connect(self._reset_layout)
+    layout.addWidget(reset_layout)
+    return group
+
+
+def _build_colors_group(self) -> QWidget:
+    group = QWidget()
+    layout = QVBoxLayout(group)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(6)
+
+    color_grid = QGridLayout()
+    color_grid.setHorizontalSpacing(8)
+    color_grid.setVerticalSpacing(5)
+    self.path_color = CompactColorControl("Path", "#00d5ff")
+    self.speedometer_color = CompactColorControl("Speedometer", "#00d5ff")
+    self.start_marker_color = CompactColorControl("Start star", "#ffd43b")
+    self.dot_color = CompactColorControl("Position dot", "#ff3355")
+    self.needle_color = CompactColorControl("Needle", "#ff3355")
+    self.background_color = CompactColorControl("Background", "#101820")
+    color_grid.addWidget(self.path_color, 0, 0)
+    color_grid.addWidget(self.speedometer_color, 1, 0)
+    color_grid.addWidget(self.start_marker_color, 2, 0)
+    color_grid.addWidget(self.dot_color, 3, 0)
+    color_grid.addWidget(self.needle_color, 4, 0)
+    color_grid.addWidget(self.background_color, 5, 0)
+    layout.addLayout(color_grid)
     return group
 
 
@@ -560,59 +718,6 @@ def _build_preview_panel(self) -> QWidget:
     layout.addWidget(desktop._labeled_slider_row("Trim start", self.start_time, self.start_time_label))
     layout.addWidget(desktop._labeled_slider_row("Trim end", self.end_time, self.end_time_label))
 
-    layout_title = QLabel("Layout")
-    layout_title.setObjectName("subsectionTitle")
-    layout.addWidget(layout_title)
-
-    self.selected_layout_label = QLabel("Drag an element in the preview, or enter exact center coordinates.")
-    self.selected_layout_label.setObjectName("muted")
-    self.selected_layout_label.setWordWrap(True)
-    layout.addWidget(self.selected_layout_label)
-
-    layout_grid = QGridLayout()
-    layout_grid.setHorizontalSpacing(10)
-    layout_grid.setVerticalSpacing(5)
-    layout_grid.setColumnMinimumWidth(0, 170)
-    layout_grid.setColumnMinimumWidth(1, 54)
-    layout_grid.setColumnMinimumWidth(2, 118)
-    layout_grid.setColumnMinimumWidth(3, 118)
-    layout_grid.setColumnMinimumWidth(4, 82)
-    layout_grid.setColumnStretch(0, 2)
-    layout_grid.setColumnStretch(2, 1)
-    layout_grid.setColumnStretch(3, 1)
-    layout_grid.addWidget(QLabel("Element"), 0, 0)
-    layout_grid.addWidget(QLabel("Show"), 0, 1)
-    layout_grid.addWidget(QLabel("X"), 0, 2)
-    layout_grid.addWidget(QLabel("Y"), 0, 3)
-    for row, name in enumerate(LAYOUT_LABELS, start=1):
-        self._add_layout_controls(layout_grid, row, name)
-    layout.addLayout(layout_grid)
-
-    reset_layout = QPushButton("Reset layout")
-    reset_layout.clicked.connect(self._reset_layout)
-    layout.addWidget(reset_layout)
-
-    colors_title = QLabel("Colors")
-    colors_title.setObjectName("subsectionTitle")
-    layout.addWidget(colors_title)
-
-    color_grid = QGridLayout()
-    color_grid.setHorizontalSpacing(16)
-    color_grid.setVerticalSpacing(5)
-    self.path_color = CompactColorControl("Path", "#00d5ff")
-    self.speedometer_color = CompactColorControl("Speedometer", "#00d5ff")
-    self.start_marker_color = CompactColorControl("Start star", "#ffd43b")
-    self.dot_color = CompactColorControl("Position dot", "#ff3355")
-    self.needle_color = CompactColorControl("Needle", "#ff3355")
-    self.background_color = CompactColorControl("Background", "#101820")
-    color_grid.addWidget(self.path_color, 0, 0)
-    color_grid.addWidget(self.speedometer_color, 0, 1)
-    color_grid.addWidget(self.start_marker_color, 1, 0)
-    color_grid.addWidget(self.dot_color, 1, 1)
-    color_grid.addWidget(self.needle_color, 2, 0)
-    color_grid.addWidget(self.background_color, 2, 1)
-    layout.addLayout(color_grid)
-
     self.create_button = QPushButton("Create")
     self.create_button.setObjectName("createButton")
     self.create_button.clicked.connect(self.create_animation)
@@ -637,7 +742,7 @@ def _build_preview_panel(self) -> QWidget:
 
 def _add_layout_controls(self, grid: QGridLayout, row: int, name: str) -> None:
     select = QPushButton(LAYOUT_LABELS[name])
-    select.setMinimumWidth(160)
+    select.setMinimumWidth(100)
     select.clicked.connect(lambda checked=False, element=name: self._preview_selected_changed(element))
 
     visible = QCheckBox()
@@ -647,26 +752,35 @@ def _add_layout_controls(self, grid: QGridLayout, row: int, name: str) -> None:
     x_spin.setRange(-20000, 20000)
     x_spin.setDecimals(1)
     x_spin.setSingleStep(1.0)
-    x_spin.setMinimumWidth(112)
+    x_spin.setMinimumWidth(82)
     x_spin.valueChanged.connect(self._layout_controls_changed)
 
     y_spin = QDoubleSpinBox()
     y_spin.setRange(-20000, 20000)
     y_spin.setDecimals(1)
     y_spin.setSingleStep(1.0)
-    y_spin.setMinimumWidth(112)
+    y_spin.setMinimumWidth(82)
     y_spin.valueChanged.connect(self._layout_controls_changed)
 
+    scale_spin = QDoubleSpinBox()
+    scale_spin.setRange(10.0, 100000.0)
+    scale_spin.setDecimals(0)
+    scale_spin.setSingleStep(5.0)
+    scale_spin.setSuffix("%")
+    scale_spin.setMinimumWidth(78)
+    scale_spin.valueChanged.connect(self._layout_controls_changed)
+
     reset = QPushButton("Reset")
-    reset.setMinimumWidth(76)
+    reset.setMinimumWidth(62)
     reset.clicked.connect(lambda checked=False, element=name: self._reset_layout_element(element))
 
     grid.addWidget(select, row, 0)
     grid.addWidget(visible, row, 1, Qt.AlignCenter)
     grid.addWidget(x_spin, row, 2)
     grid.addWidget(y_spin, row, 3)
-    grid.addWidget(reset, row, 4)
-    self.layout_controls[name] = {"visible": visible, "x": x_spin, "y": y_spin}
+    grid.addWidget(scale_spin, row, 4)
+    grid.addWidget(reset, row, 5)
+    self.layout_controls[name] = {"visible": visible, "x": x_spin, "y": y_spin, "scale": scale_spin}
 
 
 def _show_preview_frame(self) -> None:
@@ -694,10 +808,11 @@ def _sync_layout_controls(self) -> None:
             controls["visible"].setChecked(element.visible)
             controls["x"].setValue(float(element.x))
             controls["y"].setValue(float(element.y))
+            controls["scale"].setValue(float(getattr(element, "scale", 1.0)) * 100.0)
     finally:
         self._syncing_layout_controls = False
     self.selected_layout_label.setText(
-        "Selected: {}. Drag it in the preview, or enter exact center coordinates.".format(
+        "Selected: {}. Drag to move, use corner handles to resize, or enter exact values.".format(
             LAYOUT_LABELS.get(self.selected_layout_element, "Map")
         )
     )
@@ -719,15 +834,20 @@ def _layout_controls_changed(self) -> None:
 
 def _layout_from_controls(self, name: str) -> ElementLayout:
     controls = self.layout_controls[name]
-    return ElementLayout(controls["x"].value(), controls["y"].value(), controls["visible"].isChecked())
+    return ElementLayout(
+        controls["x"].value(),
+        controls["y"].value(),
+        controls["visible"].isChecked(),
+        controls["scale"].value() / 100.0,
+    )
 
 
-def _preview_layout_changed(self, name: str, x: float, y: float) -> None:
+def _preview_layout_changed(self, name: str, x: float, y: float, scale: float = 1.0) -> None:
     if name not in LAYOUT_LABELS:
         return
     self.selected_layout_element = name
     element = getattr(self.overlay_layout, name)
-    setattr(self.overlay_layout, name, ElementLayout(x, y, element.visible))
+    setattr(self.overlay_layout, name, ElementLayout(x, y, element.visible, scale))
     self._sync_layout_controls()
     self._update_preview_layout()
     self._update_layout_warning_status()
