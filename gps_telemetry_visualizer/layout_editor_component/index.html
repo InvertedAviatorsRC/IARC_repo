@@ -1,0 +1,156 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      #wrap {
+        position: relative;
+        width: 100%;
+        overflow: hidden;
+        border: 1px solid rgba(148, 163, 184, 0.45);
+        border-radius: 8px;
+        background: #0b1220;
+        box-sizing: border-box;
+        touch-action: none;
+      }
+      #preview {
+        display: block;
+        width: 100%;
+        height: auto;
+        user-select: none;
+        pointer-events: none;
+      }
+      .box {
+        position: absolute;
+        border: 2px solid rgba(255, 255, 255, 0.72);
+        background: rgba(15, 23, 42, 0.14);
+        box-sizing: border-box;
+        cursor: move;
+        transform: translate(-50%, -50%);
+      }
+      .box.selected {
+        border-color: #22c55e;
+        box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.26);
+      }
+      .label {
+        position: absolute;
+        left: 6px;
+        top: 5px;
+        padding: 2px 6px;
+        border-radius: 5px;
+        background: rgba(2, 6, 23, 0.78);
+        color: white;
+        font-size: 12px;
+        line-height: 1.2;
+        white-space: nowrap;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <img id="preview" alt="Preview" />
+    </div>
+    <script>
+      const wrap = document.getElementById("wrap");
+      const preview = document.getElementById("preview");
+      let args = { elements: [], canvas_width: 1920, canvas_height: 1080, selected: "map" };
+      let active = null;
+      let selected = "map";
+
+      function send(type, data) {
+        window.parent.postMessage({ isStreamlitMessage: true, type, ...data }, "*");
+      }
+
+      function ready() {
+        send("streamlit:componentReady", { apiVersion: 1 });
+      }
+
+      function setHeight() {
+        send("streamlit:setFrameHeight", { height: Math.ceil(wrap.getBoundingClientRect().height) + 4 });
+      }
+
+      function render(nextArgs) {
+        args = nextArgs || args;
+        selected = args.selected || selected;
+        preview.src = args.image || "";
+        wrap.style.aspectRatio = `${args.canvas_width} / ${args.canvas_height}`;
+        drawBoxes();
+        setTimeout(setHeight, 20);
+      }
+
+      function drawBoxes() {
+        [...wrap.querySelectorAll(".box")].forEach((node) => node.remove());
+        const width = wrap.clientWidth || 1;
+        const height = width * (args.canvas_height / args.canvas_width);
+
+        (args.elements || []).forEach((element) => {
+          if (!element.visible) return;
+          const box = document.createElement("div");
+          box.className = "box" + (element.name === selected ? " selected" : "");
+          box.dataset.name = element.name;
+          box.style.left = `${(element.x / args.canvas_width) * width}px`;
+          box.style.top = `${(element.y / args.canvas_height) * height}px`;
+          box.style.width = `${(element.width / args.canvas_width) * width}px`;
+          box.style.height = `${(element.height / args.canvas_height) * height}px`;
+
+          const label = document.createElement("div");
+          label.className = "label";
+          label.textContent = element.label;
+          box.appendChild(label);
+          box.addEventListener("pointerdown", pointerDown);
+          wrap.appendChild(box);
+        });
+      }
+
+      function pointerDown(event) {
+        event.preventDefault();
+        active = event.currentTarget.dataset.name;
+        selected = active;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        moveTo(event);
+        window.addEventListener("pointermove", moveTo);
+        window.addEventListener("pointerup", pointerUp, { once: true });
+      }
+
+      function pointerUp() {
+        window.removeEventListener("pointermove", moveTo);
+        active = null;
+      }
+
+      function moveTo(event) {
+        if (!active) return;
+        const rect = wrap.getBoundingClientRect();
+        const x = ((event.clientX - rect.left) / rect.width) * args.canvas_width;
+        const y = ((event.clientY - rect.top) / rect.height) * args.canvas_height;
+        send("streamlit:setComponentValue", {
+          value: {
+            element: active,
+            selected: active,
+            x,
+            y,
+          },
+        });
+      }
+
+      window.addEventListener("message", (event) => {
+        if (event.data.type === "streamlit:render") {
+          render(event.data.args);
+        }
+      });
+      window.addEventListener("resize", () => {
+        drawBoxes();
+        setHeight();
+      });
+      ready();
+      setHeight();
+    </script>
+  </body>
+</html>
