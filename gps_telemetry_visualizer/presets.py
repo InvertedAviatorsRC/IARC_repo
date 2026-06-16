@@ -13,7 +13,7 @@ from gps_telemetry_visualizer.core import (
 )
 
 
-PRESET_FILE_VERSION = 1
+PRESET_FILE_VERSION = 2
 
 
 @dataclass
