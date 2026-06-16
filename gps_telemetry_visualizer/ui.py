@@ -98,6 +98,7 @@ def run_app() -> None:
         with color_row_1:
             path_color = st.color_picker("Path", "#00d5ff")
             speedometer_color = st.color_picker("Speedometer", "#00d5ff")
+            start_marker_color = st.color_picker("Start star", "#ffd43b")
         with color_row_2:
             dot_color = st.color_picker("Position dot", "#ff3355")
             needle_color = st.color_picker("Needle", "#ff3355")
@@ -128,6 +129,7 @@ def run_app() -> None:
             max_speed=max_speed,
             path_color=path_color,
             dot_color=dot_color,
+            start_marker_color=start_marker_color,
             speedometer_color=speedometer_color,
             needle_color=needle_color,
             background_color=background_color,
