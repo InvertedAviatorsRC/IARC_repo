@@ -5,7 +5,7 @@ import math
 import os
 import re
 import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Iterable, Optional, Tuple
 
@@ -27,6 +27,7 @@ from matplotlib.colors import to_rgba
 
 VALID_EXPORT_MODES = ("map", "speedometer", "both")
 VALID_SPEED_UNITS = ("kmh", "mph", "ms")
+LAYOUT_ELEMENT_NAMES = ("map", "speedometer", "top_speed", "furthest_distance")
 SPEED_RECORD_THRESHOLDS = {
     "mph": 0.5,
     "kmh": 0.804672,
@@ -60,6 +61,9 @@ class RenderConfig:
     padding: float = 10.0
     start_time: float = 0.0
     end_time: Optional[float] = None
+    output_width: int = 1920
+    output_height: int = 1080
+    layout: Optional["OverlayLayout"] = None
 
 
 @dataclass
@@ -100,8 +104,62 @@ class MapArtists:
     trail_line: object
     start_marker: object
     dot: object
-    distance_title: object
-    distance_value: object
+
+
+@dataclass(frozen=True)
+class CanvasConfig:
+    width: int = 1920
+    height: int = 1080
+
+
+@dataclass
+class ElementLayout:
+    x: float
+    y: float
+    visible: bool = True
+
+
+@dataclass
+class OverlayLayout:
+    map: ElementLayout = field(default_factory=lambda: ElementLayout(540, 480, True))
+    speedometer: ElementLayout = field(default_factory=lambda: ElementLayout(1380, 430, True))
+    top_speed: ElementLayout = field(default_factory=lambda: ElementLayout(1380, 790, True))
+    furthest_distance: ElementLayout = field(default_factory=lambda: ElementLayout(540, 830, True))
+
+
+@dataclass(frozen=True)
+class ElementBounds:
+    name: str
+    x: float
+    y: float
+    width: float
+    height: float
+    visible: bool = True
+
+    @property
+    def left(self) -> float:
+        return self.x - self.width / 2
+
+    @property
+    def top(self) -> float:
+        return self.y - self.height / 2
+
+    @property
+    def right(self) -> float:
+        return self.x + self.width / 2
+
+    @property
+    def bottom(self) -> float:
+        return self.y + self.height / 2
+
+
+@dataclass
+class CompositionArtists:
+    ax_map: object = None
+    map_artists: Optional[MapArtists] = None
+    ax_speedometer: object = None
+    ax_top_speed: object = None
+    ax_furthest_distance: object = None
 
 
 ProgressCallback = Optional[Callable[[int, int], None]]
@@ -305,53 +363,192 @@ def format_distance(distance_m: float, speed_unit: str) -> str:
     return "{:.1f} KM".format(distance_m / 1000)
 
 
+def canvas_from_config(config: RenderConfig) -> CanvasConfig:
+    return CanvasConfig(int(config.output_width), int(config.output_height))
+
+
+def default_overlay_layout(width: int, height: int, export_mode: str = "both") -> OverlayLayout:
+    width = int(width)
+    height = int(height)
+    aspect = width / float(height)
+    map_visible = export_mode in ("map", "both")
+    speed_visible = export_mode in ("speedometer", "both")
+
+    if aspect >= 1.2:
+        layout = OverlayLayout(
+            map=ElementLayout(width * 0.29, height * 0.46, map_visible),
+            speedometer=ElementLayout(width * 0.72, height * 0.43, speed_visible),
+            furthest_distance=ElementLayout(width * 0.29, height * 0.83, map_visible),
+            top_speed=ElementLayout(width * 0.72, height * 0.78, speed_visible),
+        )
+    elif aspect <= 0.85:
+        layout = OverlayLayout(
+            map=ElementLayout(width * 0.5, height * 0.26, map_visible),
+            speedometer=ElementLayout(width * 0.5, height * 0.68, speed_visible),
+            furthest_distance=ElementLayout(width * 0.5, height * 0.49, map_visible),
+            top_speed=ElementLayout(width * 0.5, height * 0.88, speed_visible),
+        )
+    else:
+        layout = OverlayLayout(
+            map=ElementLayout(width * 0.32, height * 0.42, map_visible),
+            speedometer=ElementLayout(width * 0.68, height * 0.42, speed_visible),
+            furthest_distance=ElementLayout(width * 0.32, height * 0.76, map_visible),
+            top_speed=ElementLayout(width * 0.68, height * 0.76, speed_visible),
+        )
+
+    return layout
+
+
+def resolve_overlay_layout(config: RenderConfig) -> OverlayLayout:
+    if config.layout is None:
+        return default_overlay_layout(config.output_width, config.output_height, config.export_mode)
+    return clone_overlay_layout(config.layout)
+
+
+def clone_overlay_layout(layout: OverlayLayout) -> OverlayLayout:
+    return OverlayLayout(
+        map=ElementLayout(layout.map.x, layout.map.y, layout.map.visible),
+        speedometer=ElementLayout(layout.speedometer.x, layout.speedometer.y, layout.speedometer.visible),
+        top_speed=ElementLayout(layout.top_speed.x, layout.top_speed.y, layout.top_speed.visible),
+        furthest_distance=ElementLayout(
+            layout.furthest_distance.x,
+            layout.furthest_distance.y,
+            layout.furthest_distance.visible,
+        ),
+    )
+
+
+def scale_overlay_layout(layout: OverlayLayout, old_width: int, old_height: int, new_width: int, new_height: int) -> OverlayLayout:
+    old_width = max(1, int(old_width))
+    old_height = max(1, int(old_height))
+    new_width = int(new_width)
+    new_height = int(new_height)
+
+    def scaled(element: ElementLayout) -> ElementLayout:
+        return ElementLayout(
+            element.x / old_width * new_width,
+            element.y / old_height * new_height,
+            element.visible,
+        )
+
+    return OverlayLayout(
+        map=scaled(layout.map),
+        speedometer=scaled(layout.speedometer),
+        top_speed=scaled(layout.top_speed),
+        furthest_distance=scaled(layout.furthest_distance),
+    )
+
+
+def overlay_layout_to_dict(layout: OverlayLayout) -> dict:
+    return {
+        "map": _element_layout_to_dict(layout.map),
+        "speedometer": _element_layout_to_dict(layout.speedometer),
+        "top_speed": _element_layout_to_dict(layout.top_speed),
+        "furthest_distance": _element_layout_to_dict(layout.furthest_distance),
+    }
+
+
+def overlay_layout_from_dict(value: object, width: int, height: int, export_mode: str = "both") -> OverlayLayout:
+    default_layout = default_overlay_layout(width, height, export_mode)
+    if not isinstance(value, dict):
+        return default_layout
+
+    def parsed(name: str) -> ElementLayout:
+        default_element = getattr(default_layout, name)
+        raw = value.get(name, {})
+        if not isinstance(raw, dict):
+            return default_element
+        return ElementLayout(
+            float(raw.get("x", raw.get("center_x", default_element.x))),
+            float(raw.get("y", raw.get("center_y", default_element.y))),
+            bool(raw.get("visible", default_element.visible)),
+        )
+
+    return OverlayLayout(
+        map=parsed("map"),
+        speedometer=parsed("speedometer"),
+        top_speed=parsed("top_speed"),
+        furthest_distance=parsed("furthest_distance"),
+    )
+
+
+def compute_element_bounds(name: str, layout: OverlayLayout, canvas: CanvasConfig, config: Optional[RenderConfig] = None) -> ElementBounds:
+    if name not in LAYOUT_ELEMENT_NAMES:
+        raise ValueError("Unknown layout element: {}".format(name))
+    element = getattr(layout, name)
+    width, height = _element_size(name, canvas)
+    return ElementBounds(name, float(element.x), float(element.y), float(width), float(height), bool(element.visible))
+
+
+def compute_layout_bounds(layout: OverlayLayout, canvas: CanvasConfig, config: Optional[RenderConfig] = None) -> dict[str, ElementBounds]:
+    return {name: compute_element_bounds(name, layout, canvas, config) for name in LAYOUT_ELEMENT_NAMES}
+
+
+def preview_to_output_coordinates(
+    preview_x: float,
+    preview_y: float,
+    preview_width: float,
+    preview_height: float,
+    canvas: CanvasConfig,
+) -> Tuple[float, float]:
+    if preview_width <= 0 or preview_height <= 0:
+        raise ValueError("preview_width and preview_height must be positive")
+    return (
+        float(preview_x) / float(preview_width) * canvas.width,
+        float(preview_y) / float(preview_height) * canvas.height,
+    )
+
+
+def layout_warnings(layout: OverlayLayout, canvas: CanvasConfig, config: Optional[RenderConfig] = None) -> list[str]:
+    bounds = compute_layout_bounds(layout, canvas, config)
+    warnings = []
+    visible_bounds = [box for box in bounds.values() if box.visible]
+
+    for box in visible_bounds:
+        visibility = _box_visibility(box, canvas)
+        label = _element_label(box.name)
+        if visibility == "outside":
+            warnings.append("{} is completely outside the output frame and will not appear in the rendered video.".format(label))
+        elif visibility == "partial":
+            warnings.append("{} is partially outside the output frame and will be cropped.".format(label))
+
+    for index, first in enumerate(visible_bounds):
+        for second in visible_bounds[index + 1 :]:
+            if _boxes_overlap(first, second):
+                warnings.append("{} overlaps {}.".format(_element_label(first.name), _element_label(second.name).lower()))
+
+    return warnings
+
+
 def render_static_preview(csv_source, config: RenderConfig, frame_fraction: float = 0.65, frame_time: Optional[float] = None):
     data = prepare_telemetry(csv_source, config)
     states = compute_frame_states(data, config)
-    fig, ax_map, ax_speed = _build_figure(data, config)
     if frame_time is None:
         frame = int(len(data.frame_x) * frame_fraction)
     else:
         frame = int(round(max(0.0, frame_time) * config.fps))
     frame = max(0, min(len(data.frame_x) - 1, frame))
-    state = states[frame]
-
-    if ax_map is not None:
-        map_artists = _setup_map_artists(ax_map, data, config)
-        _update_map_artists(map_artists, data, config, frame, state)
-
-    if ax_speed is not None:
-        draw_speedometer(ax_speed, state.current_speed, data.max_speed, config, state)
-
-    _finalize_figure(fig)
+    fig, artists = _build_composition(data, config)
+    _update_composition(artists, data, config, frame, states[frame])
     return fig
 
 
 def render_preview_frames(csv_source, config: RenderConfig, frame_count: int = 28, dpi: int = 110) -> Tuple[list[bytes], TelemetryData]:
     data = prepare_telemetry(csv_source, config)
     states = compute_frame_states(data, config)
-    fig, ax_map, ax_speed = _build_figure(data, config)
-    map_artists = None
-    if ax_map is not None:
-        map_artists = _setup_map_artists(ax_map, data, config)
+    fig, artists = _build_composition(data, config)
 
     frame_count = max(1, min(int(frame_count), len(data.frame_x)))
     frame_indexes = np.linspace(0, len(data.frame_x) - 1, frame_count, dtype=int)
     rendered_frames = []
 
     for frame in frame_indexes:
-        if ax_map is not None:
-            _update_map_artists(map_artists, data, config, frame, states[frame])
-
-        if ax_speed is not None:
-            draw_speedometer(ax_speed, states[frame].current_speed, data.max_speed, config, states[frame])
-
-        _finalize_figure(fig)
+        _update_composition(artists, data, config, frame, states[frame])
         buffer = io.BytesIO()
         fig.savefig(
             buffer,
             format="png",
-            dpi=dpi,
+            dpi=fig.dpi,
             facecolor=fig.get_facecolor(),
             transparent=config.transparent,
         )
@@ -372,37 +569,16 @@ def render_animation(csv_source, output_path, config: RenderConfig, progress_cal
 
     _configure_ffmpeg()
 
-    fig, ax_map, ax_speed = _build_figure(data, config)
-    map_artists = None
-    if ax_map is not None:
-        map_artists = _setup_map_artists(ax_map, data, config)
+    fig, artists = _build_composition(data, config)
 
     def update(frame):
-        artists = []
         state = states[frame]
-
-        if ax_map is not None:
-            _update_map_artists(map_artists, data, config, frame, state)
-            artists.extend(
-                [
-                    map_artists.trail_line,
-                    map_artists.start_marker,
-                    map_artists.dot,
-                    map_artists.distance_title,
-                    map_artists.distance_value,
-                ]
-            )
-
-        if ax_speed is not None:
-            draw_speedometer(ax_speed, state.current_speed, data.max_speed, config, state)
-            artists.extend(ax_speed.patches)
-            artists.extend(ax_speed.lines)
-            artists.extend(ax_speed.texts)
+        changed_artists = _update_composition(artists, data, config, frame, state)
 
         if progress_callback:
             progress_callback(frame + 1, len(data.frame_x))
 
-        return artists
+        return changed_artists
 
     animation = FuncAnimation(
         fig,
@@ -414,7 +590,7 @@ def render_animation(csv_source, output_path, config: RenderConfig, progress_cal
 
     writer = _build_writer(output, config)
     savefig_kwargs = {"transparent": config.transparent} if output.suffix.lower() == ".mov" else {}
-    animation.save(str(output), writer=writer, savefig_kwargs=savefig_kwargs)
+    animation.save(str(output), writer=writer, dpi=fig.dpi, savefig_kwargs=savefig_kwargs)
     plt.close(fig)
     return output
 
@@ -425,6 +601,7 @@ def draw_speedometer(
     max_speed: float,
     config: RenderConfig,
     state: Optional[FrameVisualState] = None,
+    show_top_speed: bool = True,
 ) -> None:
     ax.clear()
     ax.set_aspect("equal")
@@ -496,7 +673,7 @@ def draw_speedometer(
         color=to_rgba(config.text_color, 0.75),
     )
 
-    if state is not None:
+    if state is not None and show_top_speed:
         _draw_top_speed_indicator(ax, state, config)
 
 
@@ -516,6 +693,8 @@ def _validate_config(config: RenderConfig) -> None:
         raise ValueError("start_time must be greater than or equal to 0")
     if config.end_time is not None and config.end_time <= config.start_time:
         raise ValueError("end_time must be greater than start_time")
+    if int(config.output_width) <= 0 or int(config.output_height) <= 0:
+        raise ValueError("output_width and output_height must be positive integers")
     convert_speed(0, config.speed_input_unit, config.speed_output_unit)
 
 
@@ -681,6 +860,81 @@ def _column_or_zeros(df: pd.DataFrame, column: Optional[str]) -> np.ndarray:
     return pd.to_numeric(df[column], errors="coerce").fillna(0).to_numpy(dtype=float)
 
 
+def _build_composition(data: TelemetryData, config: RenderConfig) -> Tuple[object, CompositionArtists]:
+    canvas = canvas_from_config(config)
+    layout = resolve_overlay_layout(config)
+    facecolor = (0, 0, 0, 0) if config.transparent else to_rgba(config.background_color)
+    dpi = 100
+    fig = plt.figure(figsize=(canvas.width / dpi, canvas.height / dpi), dpi=dpi, facecolor=facecolor)
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+    bounds = compute_layout_bounds(layout, canvas, config)
+    artists = CompositionArtists()
+
+    if bounds["map"].visible:
+        artists.ax_map = fig.add_axes(_bounds_to_axes_rect(bounds["map"], canvas))
+        artists.map_artists = _setup_map_artists(artists.ax_map, data, config)
+
+    if bounds["speedometer"].visible:
+        artists.ax_speedometer = fig.add_axes(_bounds_to_axes_rect(bounds["speedometer"], canvas))
+
+    if bounds["top_speed"].visible:
+        artists.ax_top_speed = fig.add_axes(_bounds_to_axes_rect(bounds["top_speed"], canvas))
+        _configure_text_axis(artists.ax_top_speed, config)
+
+    if bounds["furthest_distance"].visible:
+        artists.ax_furthest_distance = fig.add_axes(_bounds_to_axes_rect(bounds["furthest_distance"], canvas))
+        _configure_text_axis(artists.ax_furthest_distance, config)
+
+    return fig, artists
+
+
+def _update_composition(
+    artists: CompositionArtists,
+    data: TelemetryData,
+    config: RenderConfig,
+    frame: int,
+    state: FrameVisualState,
+) -> list:
+    changed_artists = []
+
+    if artists.ax_map is not None and artists.map_artists is not None:
+        _update_map_artists(artists.map_artists, data, frame, state)
+        changed_artists.extend(
+            [
+                artists.map_artists.trail_line,
+                artists.map_artists.start_marker,
+                artists.map_artists.dot,
+            ]
+        )
+
+    if artists.ax_speedometer is not None:
+        draw_speedometer(artists.ax_speedometer, state.current_speed, data.max_speed, config, state=None, show_top_speed=False)
+        changed_artists.extend(artists.ax_speedometer.patches)
+        changed_artists.extend(artists.ax_speedometer.lines)
+        changed_artists.extend(artists.ax_speedometer.texts)
+
+    if artists.ax_top_speed is not None:
+        changed_artists.extend(_draw_record_indicator(
+            artists.ax_top_speed,
+            "TOP SPEED",
+            "{:.1f} {}".format(state.top_speed, format_speed_unit(config.speed_output_unit)),
+            state.top_speed_highlight,
+            config,
+        ))
+
+    if artists.ax_furthest_distance is not None:
+        changed_artists.extend(_draw_record_indicator(
+            artists.ax_furthest_distance,
+            "FURTHEST DISTANCE",
+            format_distance(state.furthest_distance_m, config.speed_output_unit),
+            state.distance_highlight,
+            config,
+        ))
+
+    return changed_artists
+
+
 def _build_figure(data: TelemetryData, config: RenderConfig):
     facecolor = (0, 0, 0, 0) if config.transparent else to_rgba(config.background_color)
 
@@ -724,51 +978,18 @@ def _setup_map_artists(ax_map, data: TelemetryData, config: RenderConfig):
         zorder=3,
     )
     dot, = ax_map.plot([], [], "o", markersize=14, color=to_rgba(config.dot_color, 1.0), zorder=4)
-    distance_title = ax_map.text(
-        0.5,
-        -0.075,
-        "FURTHEST DISTANCE",
-        transform=ax_map.transAxes,
-        ha="center",
-        va="center",
-        fontsize=10,
-        fontweight="bold",
-        clip_on=False,
-        zorder=5,
-    )
-    distance_value = ax_map.text(
-        0.5,
-        -0.145,
-        "",
-        transform=ax_map.transAxes,
-        ha="center",
-        va="center",
-        fontsize=16,
-        fontweight="bold",
-        clip_on=False,
-        zorder=5,
-    )
-    return MapArtists(trail_line, start_marker, dot, distance_title, distance_value)
+    return MapArtists(trail_line, start_marker, dot)
 
 
 def _update_map_artists(
     artists: MapArtists,
     data: TelemetryData,
-    config: RenderConfig,
     frame: int,
     state: FrameVisualState,
 ) -> None:
     artists.trail_line.set_data(data.frame_x[: frame + 1], data.frame_y[: frame + 1])
     artists.start_marker.set_data([data.frame_x[0]], [data.frame_y[0]])
     artists.dot.set_data([state.current_x], [state.current_y])
-    _update_record_texts(
-        artists.distance_title,
-        artists.distance_value,
-        "FURTHEST DISTANCE",
-        format_distance(state.furthest_distance_m, config.speed_output_unit),
-        state.distance_highlight,
-        config,
-    )
 
 
 def _draw_top_speed_indicator(ax, state: FrameVisualState, config: RenderConfig) -> None:
@@ -810,9 +1031,112 @@ def _update_record_texts(title_text, value_text, title: str, value: str, highlig
     value_text.set_color(rgba)
 
 
+def _draw_record_indicator(ax, title: str, value: str, highlighted: bool, config: RenderConfig) -> list:
+    ax.clear()
+    _configure_text_axis(ax, config)
+    title_text = ax.text(
+        0.5,
+        0.66,
+        title,
+        ha="center",
+        va="center",
+        fontsize=18,
+        fontweight="bold",
+        transform=ax.transAxes,
+    )
+    value_text = ax.text(
+        0.5,
+        0.31,
+        value,
+        ha="center",
+        va="center",
+        fontsize=30,
+        fontweight="bold",
+        transform=ax.transAxes,
+    )
+    _update_record_texts(title_text, value_text, title, value, highlighted, config)
+    return [title_text, value_text]
+
+
+def _configure_text_axis(ax, config: RenderConfig) -> None:
+    ax.axis("off")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_facecolor((0, 0, 0, 0) if config.transparent else to_rgba(config.background_color))
+
+
 def _finalize_figure(fig) -> None:
     fig.tight_layout(pad=0.25)
     fig.subplots_adjust(bottom=0.18)
+
+
+def _element_layout_to_dict(element: ElementLayout) -> dict:
+    return {"x": float(element.x), "y": float(element.y), "visible": bool(element.visible)}
+
+
+def _element_size(name: str, canvas: CanvasConfig) -> Tuple[float, float]:
+    width = float(canvas.width)
+    height = float(canvas.height)
+    aspect = width / max(1.0, height)
+
+    if name == "map":
+        if aspect >= 1.2:
+            return width * 0.42, height * 0.62
+        if aspect <= 0.85:
+            return width * 0.82, height * 0.34
+        return width * 0.58, height * 0.48
+
+    if name == "speedometer":
+        if aspect >= 1.2:
+            return width * 0.34, height * 0.42
+        if aspect <= 0.85:
+            return width * 0.76, height * 0.28
+        return width * 0.42, height * 0.34
+
+    if name == "top_speed":
+        return min(width * 0.38, 640.0), max(86.0, min(height * 0.13, 150.0))
+
+    if name == "furthest_distance":
+        return min(width * 0.42, 700.0), max(86.0, min(height * 0.13, 150.0))
+
+    raise ValueError("Unknown layout element: {}".format(name))
+
+
+def _bounds_to_axes_rect(bounds: ElementBounds, canvas: CanvasConfig) -> list[float]:
+    return [
+        bounds.left / canvas.width,
+        1.0 - (bounds.top + bounds.height) / canvas.height,
+        bounds.width / canvas.width,
+        bounds.height / canvas.height,
+    ]
+
+
+def _box_visibility(box: ElementBounds, canvas: CanvasConfig) -> str:
+    outside = box.right <= 0 or box.left >= canvas.width or box.bottom <= 0 or box.top >= canvas.height
+    if outside:
+        return "outside"
+    partial = box.left < 0 or box.top < 0 or box.right > canvas.width or box.bottom > canvas.height
+    if partial:
+        return "partial"
+    return "inside"
+
+
+def _boxes_overlap(first: ElementBounds, second: ElementBounds) -> bool:
+    return not (
+        first.right <= second.left
+        or first.left >= second.right
+        or first.bottom <= second.top
+        or first.top >= second.bottom
+    )
+
+
+def _element_label(name: str) -> str:
+    return {
+        "map": "Map",
+        "speedometer": "Speedometer",
+        "top_speed": "Top-speed indicator",
+        "furthest_distance": "Furthest-distance indicator",
+    }[name]
 
 
 def _nice_tick_step(max_speed: float) -> int:
