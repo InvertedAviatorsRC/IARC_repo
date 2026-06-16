@@ -28,6 +28,8 @@ def main() -> None:
     parser.add_argument("--opaque", action="store_true", help="Render with an opaque dark background")
     parser.add_argument("--start-time", type=float, default=0.0, help="Start rendering at this many seconds into the telemetry.")
     parser.add_argument("--end-time", type=float, help="Stop rendering at this many seconds into the telemetry.")
+    parser.add_argument("--output-width", type=int, default=1920, help="Output canvas width in pixels.")
+    parser.add_argument("--output-height", type=int, default=1080, help="Output canvas height in pixels.")
     args = parser.parse_args()
 
     config = RenderConfig(
@@ -49,6 +51,8 @@ def main() -> None:
         transparent=not args.opaque,
         start_time=args.start_time,
         end_time=args.end_time,
+        output_width=args.output_width,
+        output_height=args.output_height,
     )
 
     rendered = render_animation(Path(args.csv), Path(args.output), config)
