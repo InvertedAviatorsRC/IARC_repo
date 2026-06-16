@@ -6,7 +6,23 @@ from dataclasses import replace
 import matplotlib.pyplot as plt
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QCheckBox, QDoubleSpinBox, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QColorDialog,
+    QComboBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSizePolicy,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from gps_telemetry_visualizer import desktop
 from gps_telemetry_visualizer.core import (
@@ -32,6 +48,81 @@ LAYOUT_LABELS = {
 }
 
 
+class CollapsibleSection(QWidget):
+    def __init__(self, title: str, content: QWidget, expanded: bool = True) -> None:
+        super().__init__()
+        self._title = title
+        self._content = content
+        self._toggle = QPushButton()
+        self._toggle.setObjectName("sectionToggle")
+        self._toggle.clicked.connect(self._toggle_content)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        layout.addWidget(self._toggle)
+        layout.addWidget(content)
+
+        content.setVisible(expanded)
+        self._refresh_title()
+
+    def _toggle_content(self) -> None:
+        self._content.setVisible(not self._content.isVisible())
+        self._refresh_title()
+
+    def _refresh_title(self) -> None:
+        marker = "v" if self._content.isVisible() else ">"
+        self._toggle.setText("{} {}".format(marker, self._title))
+
+
+class CompactColorControl(QWidget):
+    color_changed = Signal(str)
+
+    def __init__(self, label: str, color: str) -> None:
+        super().__init__()
+        self._label = label
+        self._color = color
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self.swatch = QPushButton("")
+        self.swatch.setObjectName("colorSwatch")
+        self.swatch.setFixedSize(28, 24)
+        self.swatch.clicked.connect(self._choose_color)
+
+        self.label = QLabel(label)
+        self.label.setMinimumWidth(88)
+        self.value = QLabel(color.upper())
+        self.value.setObjectName("muted")
+        self.value.setMinimumWidth(72)
+
+        layout.addWidget(self.label)
+        layout.addWidget(self.swatch)
+        layout.addWidget(self.value)
+        layout.addStretch()
+        self._refresh()
+
+    @property
+    def color(self) -> str:
+        return self._color
+
+    def _choose_color(self) -> None:
+        selected = QColorDialog.getColor(QColor(self._color), self.window(), self._label)
+        if selected.isValid():
+            self._color = selected.name()
+            self._refresh()
+            self.color_changed.emit(self._color)
+
+    def _refresh(self) -> None:
+        self.value.setText(self._color.upper())
+        self.swatch.setStyleSheet(
+            "QPushButton#colorSwatch {{ background: {}; border: 1px solid #536071; border-radius: 5px; }}".format(
+                self._color
+            )
+        )
+
+
 class LayoutPreview(QLabel):
     layout_changed = Signal(str, float, float)
     selected_changed = Signal(str)
@@ -39,8 +130,9 @@ class LayoutPreview(QLabel):
     def __init__(self) -> None:
         super().__init__("Select a CSV to preview.")
         self.setAlignment(Qt.AlignCenter)
-        self.setMinimumSize(460, 360)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumSize(720, 520)
+        self.setFixedHeight(520)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setObjectName("preview")
         self.setMouseTracking(True)
         self._pixmap = None
@@ -175,11 +267,18 @@ class LayoutPreview(QLabel):
 
 _ORIGINAL_INIT = desktop.MainWindow.__init__
 _ORIGINAL_CONFIG = desktop.MainWindow._config
+_ORIGINAL_CREATE_ANIMATION = desktop.MainWindow.create_animation
+_ORIGINAL_RENDER_FINISHED = desktop.MainWindow._render_finished
+_ORIGINAL_RENDER_FAILED = desktop.MainWindow._render_failed
 
 
 def apply_patch() -> None:
     desktop.LayoutPreview = LayoutPreview
     desktop.MainWindow.__init__ = _patched_init
+    desktop.MainWindow._build_controls_panel = _build_controls_panel
+    desktop.MainWindow._build_file_group = _build_file_group
+    desktop.MainWindow._build_export_group = _build_export_group
+    desktop.MainWindow._build_advanced_group = _build_advanced_group
     desktop.MainWindow._build_preview_panel = _build_preview_panel
     desktop.MainWindow._add_layout_controls = _add_layout_controls
     desktop.MainWindow._show_preview_frame = _show_preview_frame
@@ -196,6 +295,9 @@ def apply_patch() -> None:
     desktop.MainWindow.refresh_preview = refresh_preview
     desktop.MainWindow._resolution_changed = _resolution_changed
     desktop.MainWindow._config = _config
+    desktop.MainWindow.create_animation = create_animation
+    desktop.MainWindow._render_finished = _render_finished
+    desktop.MainWindow._render_failed = _render_failed
 
 
 def main() -> None:
@@ -204,33 +306,241 @@ def main() -> None:
 
 
 def _patched_init(self) -> None:
+    self.setWindowTitle("GPS Telemetry Visualizer")
+    self.resize(1500, 860)
+    self.setMinimumSize(1240, 760)
+
+    self.csv_path = ""
+    self.columns = []
+    self.render_thread = None
+    self.render_worker = None
+    self.preview_frames = []
+    self.preview_frame_index = 0
     self.overlay_layout = default_overlay_layout(1920, 1080, "both")
     self.layout_canvas_width = 1920
     self.layout_canvas_height = 1080
     self.layout_controls = {}
     self._syncing_layout_controls = False
     self.selected_layout_element = "map"
-    _ORIGINAL_INIT(self)
-    self.output_width.valueChanged.connect(self._resolution_changed)
-    self.output_height.valueChanged.connect(self._resolution_changed)
+    self.preview_timer = desktop.QTimer(self)
+    self.preview_timer.setSingleShot(True)
+    self.preview_timer.timeout.connect(self.refresh_preview)
+    self.preview_playback_timer = desktop.QTimer(self)
+    self.preview_playback_timer.timeout.connect(self._advance_preview_frame)
+
+    root = QWidget()
+    self.setCentralWidget(root)
+    main_layout = QGridLayout(root)
+    main_layout.setContentsMargins(14, 14, 14, 14)
+    main_layout.setHorizontalSpacing(14)
+    main_layout.setVerticalSpacing(0)
+    main_layout.setColumnStretch(0, 2)
+    main_layout.setColumnStretch(1, 6)
+
+    main_layout.addWidget(self._build_controls_panel(), 0, 0)
+    main_layout.addWidget(self._build_preview_panel(), 0, 1)
+
+    self._connect_preview_signals()
+    self._update_transparency_controls()
     self._sync_layout_controls()
     self._update_preview_layout()
+
+
+def _build_controls_panel(self) -> QWidget:
+    panel = QWidget()
+    panel.setObjectName("panel")
+    panel.setMinimumWidth(340)
+    panel.setMaximumWidth(440)
+    layout = QVBoxLayout(panel)
+    layout.setContentsMargins(14, 14, 14, 14)
+    layout.setSpacing(10)
+
+    title = QLabel("Controls")
+    title.setObjectName("sectionTitle")
+    layout.addWidget(title)
+
+    layout.addWidget(CollapsibleSection("File", self._build_file_group(), expanded=True))
+    layout.addWidget(CollapsibleSection("Export", self._build_export_group(), expanded=True))
+    layout.addWidget(CollapsibleSection("Advanced settings", self._build_advanced_group(), expanded=False))
+    layout.addStretch()
+    return panel
+
+
+def _build_file_group(self) -> QWidget:
+    group = QWidget()
+    layout = QVBoxLayout(group)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(8)
+
+    self.drop_zone = desktop.CsvDropZone()
+    self.drop_zone.file_dropped.connect(self.set_csv_file)
+    self.drop_zone.setMinimumHeight(118)
+    self.drop_zone.setMaximumHeight(132)
+    layout.addWidget(self.drop_zone)
+
+    browse_csv = QPushButton("Browse CSV")
+    browse_csv.clicked.connect(self.browse_csv)
+    layout.addWidget(browse_csv)
+
+    self.csv_label = QLabel("No CSV selected")
+    self.csv_label.setWordWrap(True)
+    self.csv_label.setObjectName("muted")
+    layout.addWidget(self.csv_label)
+    return group
+
+
+def _build_export_group(self) -> QWidget:
+    group = QWidget()
+    layout = QVBoxLayout(group)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(8)
+
+    folder_row = QHBoxLayout()
+    self.output_folder = QLineEdit(str(desktop.Path.cwd() / "output"))
+    browse_folder = QPushButton("Browse")
+    browse_folder.setMaximumWidth(82)
+    browse_folder.clicked.connect(self.browse_output_folder)
+    folder_row.addWidget(self.output_folder, 1)
+    folder_row.addWidget(browse_folder)
+    layout.addWidget(QLabel("Output folder"))
+    layout.addLayout(folder_row)
+
+    type_row = QHBoxLayout()
+    self.file_type = QComboBox()
+    self.file_type.addItems(["mp4", "mov"])
+    self.file_type.setMaximumWidth(92)
+    self.file_type.currentTextChanged.connect(self._file_type_changed)
+    self.transparent = QCheckBox("Transparent background")
+    self.transparent.setChecked(False)
+    self.transparent.toggled.connect(self._update_background_controls)
+    type_row.addWidget(QLabel("File type"))
+    type_row.addWidget(self.file_type)
+    type_row.addSpacing(10)
+    type_row.addWidget(self.transparent)
+    type_row.addStretch()
+    layout.addLayout(type_row)
+
+    self.resolution_preset = QComboBox()
+    self.resolution_preset.addItems(list(desktop.RESOLUTION_PRESETS))
+    self.resolution_preset.setCurrentText("1920 x 1080 - 1080p")
+    self.resolution_preset.currentTextChanged.connect(self._resolution_changed)
+    layout.addWidget(QLabel("Resolution"))
+    layout.addWidget(self.resolution_preset)
+
+    self.resolution_size_row = QWidget()
+    size_layout = QHBoxLayout(self.resolution_size_row)
+    size_layout.setContentsMargins(0, 0, 0, 0)
+    size_layout.setSpacing(8)
+    self.output_width = QSpinBox()
+    self.output_width.setRange(1, 10000)
+    self.output_width.setValue(1920)
+    self.output_width.setMaximumWidth(112)
+    self.output_width.valueChanged.connect(self._resolution_changed)
+    self.output_height = QSpinBox()
+    self.output_height.setRange(1, 10000)
+    self.output_height.setValue(1080)
+    self.output_height.setMaximumWidth(112)
+    self.output_height.valueChanged.connect(self._resolution_changed)
+    size_layout.addWidget(QLabel("W"))
+    size_layout.addWidget(self.output_width)
+    size_layout.addWidget(QLabel("H"))
+    size_layout.addWidget(self.output_height)
+    size_layout.addStretch()
+    layout.addWidget(self.resolution_size_row)
+
+    self.output_name = QLineEdit(desktop.default_output_name("both", "mp4"))
+    layout.addWidget(QLabel("Output file name"))
+    layout.addWidget(self.output_name)
+
+    self.export_mode = QComboBox()
+    self.export_mode.addItems(["both"])
+    self.export_mode.setVisible(False)
+    layout.addWidget(self.export_mode)
+    self._resolution_changed()
+    return group
+
+
+def _build_advanced_group(self) -> QWidget:
+    group = QWidget()
+    layout = QVBoxLayout(group)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(8)
+
+    form = QFormLayout()
+    form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    form.setHorizontalSpacing(10)
+    form.setVerticalSpacing(8)
+
+    self.gps_col = desktop._editable_combo("GPS")
+    self.speed_col = desktop._editable_combo("GSpd(kmh)")
+    self.heading_col = desktop._editable_combo("Hdg(°)")
+    self.altitude_col = desktop._editable_combo("Alt(m)")
+    form.addRow("GPS column", self.gps_col)
+    form.addRow("Speed column", self.speed_col)
+    form.addRow("Heading column", self.heading_col)
+    form.addRow("Altitude column", self.altitude_col)
+    layout.addLayout(form)
+
+    units_row = QHBoxLayout()
+    self.speed_input_unit = QComboBox()
+    self.speed_input_unit.addItems(["kmh", "mph", "ms"])
+    self.speed_input_unit.setMaximumWidth(92)
+    self.speed_output_unit = QComboBox()
+    self.speed_output_unit.addItems(["mph", "kmh", "ms"])
+    self.speed_output_unit.setMaximumWidth(92)
+    units_row.addWidget(QLabel("Input"))
+    units_row.addWidget(self.speed_input_unit)
+    units_row.addWidget(QLabel("Output"))
+    units_row.addWidget(self.speed_output_unit)
+    units_row.addStretch()
+    layout.addLayout(units_row)
+
+    timing_row = QHBoxLayout()
+    self.fps = QSpinBox()
+    self.fps.setRange(10, 60)
+    self.fps.setSingleStep(5)
+    self.fps.setValue(30)
+    self.fps.setMaximumWidth(84)
+    self.seconds_between = QDoubleSpinBox()
+    self.seconds_between.setRange(0.2, 3.0)
+    self.seconds_between.setSingleStep(0.1)
+    self.seconds_between.setValue(1.0)
+    self.seconds_between.setMaximumWidth(92)
+    timing_row.addWidget(QLabel("FPS"))
+    timing_row.addWidget(self.fps)
+    timing_row.addWidget(QLabel("GPS seconds"))
+    timing_row.addWidget(self.seconds_between)
+    timing_row.addStretch()
+    layout.addLayout(timing_row)
+
+    speed_row = QHBoxLayout()
+    self.auto_max_speed = QCheckBox("Auto max speed")
+    self.auto_max_speed.setChecked(True)
+    self.auto_max_speed.toggled.connect(lambda checked: self.max_speed.setEnabled(not checked))
+    self.max_speed = QDoubleSpinBox()
+    self.max_speed.setRange(1.0, 500.0)
+    self.max_speed.setSingleStep(5.0)
+    self.max_speed.setValue(60.0)
+    self.max_speed.setEnabled(False)
+    self.max_speed.setMaximumWidth(96)
+    speed_row.addWidget(self.auto_max_speed)
+    speed_row.addWidget(self.max_speed)
+    speed_row.addStretch()
+    layout.addLayout(speed_row)
+    return group
 
 
 def _build_preview_panel(self) -> QWidget:
     panel = QWidget()
     panel.setObjectName("panel")
     layout = QVBoxLayout(panel)
-    layout.setContentsMargins(18, 18, 18, 18)
-    layout.setSpacing(10)
-    title = QLabel("Preview")
-    title.setObjectName("sectionTitle")
-    layout.addWidget(title)
+    layout.setContentsMargins(14, 14, 14, 14)
+    layout.setSpacing(8)
 
     self.preview = LayoutPreview()
     self.preview.layout_changed.connect(self._preview_layout_changed)
     self.preview.selected_changed.connect(self._preview_selected_changed)
-    layout.addWidget(self.preview, 1)
+    layout.addWidget(self.preview)
 
     timeline_title = QLabel("Timeline")
     timeline_title.setObjectName("subsectionTitle")
@@ -259,8 +569,16 @@ def _build_preview_panel(self) -> QWidget:
     layout.addWidget(self.selected_layout_label)
 
     layout_grid = QGridLayout()
-    layout_grid.setHorizontalSpacing(8)
-    layout_grid.setVerticalSpacing(6)
+    layout_grid.setHorizontalSpacing(10)
+    layout_grid.setVerticalSpacing(5)
+    layout_grid.setColumnMinimumWidth(0, 170)
+    layout_grid.setColumnMinimumWidth(1, 54)
+    layout_grid.setColumnMinimumWidth(2, 118)
+    layout_grid.setColumnMinimumWidth(3, 118)
+    layout_grid.setColumnMinimumWidth(4, 82)
+    layout_grid.setColumnStretch(0, 2)
+    layout_grid.setColumnStretch(2, 1)
+    layout_grid.setColumnStretch(3, 1)
     layout_grid.addWidget(QLabel("Element"), 0, 0)
     layout_grid.addWidget(QLabel("Show"), 0, 1)
     layout_grid.addWidget(QLabel("X"), 0, 2)
@@ -278,14 +596,14 @@ def _build_preview_panel(self) -> QWidget:
     layout.addWidget(colors_title)
 
     color_grid = QGridLayout()
-    color_grid.setHorizontalSpacing(10)
-    color_grid.setVerticalSpacing(8)
-    self.path_color = desktop.ColorButton("Path", "#00d5ff")
-    self.speedometer_color = desktop.ColorButton("Speedometer", "#00d5ff")
-    self.start_marker_color = desktop.ColorButton("Start star", "#ffd43b")
-    self.dot_color = desktop.ColorButton("Position dot", "#ff3355")
-    self.needle_color = desktop.ColorButton("Needle", "#ff3355")
-    self.background_color = desktop.ColorButton("Background", "#101820")
+    color_grid.setHorizontalSpacing(16)
+    color_grid.setVerticalSpacing(5)
+    self.path_color = CompactColorControl("Path", "#00d5ff")
+    self.speedometer_color = CompactColorControl("Speedometer", "#00d5ff")
+    self.start_marker_color = CompactColorControl("Start star", "#ffd43b")
+    self.dot_color = CompactColorControl("Position dot", "#ff3355")
+    self.needle_color = CompactColorControl("Needle", "#ff3355")
+    self.background_color = CompactColorControl("Background", "#101820")
     color_grid.addWidget(self.path_color, 0, 0)
     color_grid.addWidget(self.speedometer_color, 0, 1)
     color_grid.addWidget(self.start_marker_color, 1, 0)
@@ -294,20 +612,10 @@ def _build_preview_panel(self) -> QWidget:
     color_grid.addWidget(self.background_color, 2, 1)
     layout.addLayout(color_grid)
 
-    self.transparent = QCheckBox("Transparent background")
-    self.transparent.setChecked(False)
-    self.transparent.toggled.connect(self._update_background_controls)
-    layout.addWidget(self.transparent)
-
-    action_row = QHBoxLayout()
-    refresh = QPushButton("Refresh Preview")
-    refresh.clicked.connect(self.refresh_preview)
     self.create_button = QPushButton("Create")
     self.create_button.setObjectName("createButton")
     self.create_button.clicked.connect(self.create_animation)
-    action_row.addWidget(refresh)
-    action_row.addWidget(self.create_button)
-    layout.addLayout(action_row)
+    layout.addWidget(self.create_button)
 
     self.progress = desktop.QProgressBar()
     self.progress.setVisible(False)
@@ -315,13 +623,20 @@ def _build_preview_panel(self) -> QWidget:
 
     self.status = QLabel("")
     self.status.setWordWrap(True)
-    self.status.setObjectName("muted")
+    self.status.setObjectName("warning")
+    self.status.setVisible(False)
+    self.status.setStyleSheet(
+        "QLabel#warning { background: #2a1f12; color: #ffdca8; border: 1px solid #8a5a18; "
+        "border-radius: 6px; padding: 7px; }"
+    )
     layout.addWidget(self.status)
+    layout.addStretch()
     return panel
 
 
 def _add_layout_controls(self, grid: QGridLayout, row: int, name: str) -> None:
     select = QPushButton(LAYOUT_LABELS[name])
+    select.setMinimumWidth(160)
     select.clicked.connect(lambda checked=False, element=name: self._preview_selected_changed(element))
 
     visible = QCheckBox()
@@ -331,15 +646,18 @@ def _add_layout_controls(self, grid: QGridLayout, row: int, name: str) -> None:
     x_spin.setRange(-20000, 20000)
     x_spin.setDecimals(1)
     x_spin.setSingleStep(1.0)
+    x_spin.setMinimumWidth(112)
     x_spin.valueChanged.connect(self._layout_controls_changed)
 
     y_spin = QDoubleSpinBox()
     y_spin.setRange(-20000, 20000)
     y_spin.setDecimals(1)
     y_spin.setSingleStep(1.0)
+    y_spin.setMinimumWidth(112)
     y_spin.valueChanged.connect(self._layout_controls_changed)
 
     reset = QPushButton("Reset")
+    reset.setMinimumWidth(76)
     reset.clicked.connect(lambda checked=False, element=name: self._reset_layout_element(element))
 
     grid.addWidget(select, row, 0)
@@ -445,11 +763,19 @@ def _reset_layout(self) -> None:
 
 
 def _update_layout_warning_status(self, base_message: str | None = None) -> None:
-    warnings = layout_warnings(self.overlay_layout, self._current_canvas(), self._config())
-    message = base_message or self.status.text()
+    warnings = _active_layout_warnings(self)
+    message = ""
     if warnings:
-        message = "{}\n{}".format(message, "\n".join(warnings)) if message else "\n".join(warnings)
+        message = "Warnings:\n- " + "\n- ".join(warnings)
     self.status.setText(message)
+    self.status.setVisible(bool(warnings))
+
+
+def _active_layout_warnings(self) -> list[str]:
+    warnings = layout_warnings(self.overlay_layout, self._current_canvas(), self._config())
+    if not any(getattr(self.overlay_layout, name).visible for name in LAYOUT_LABELS):
+        warnings.append("No overlay elements are visible. The rendered video will be blank.")
+    return warnings
 
 
 def refresh_preview(self) -> None:
@@ -506,6 +832,8 @@ def _resolution_changed(self) -> None:
     old_height = getattr(self, "layout_canvas_height", self.output_height.value())
     self.output_width.setEnabled(is_custom)
     self.output_height.setEnabled(is_custom)
+    if hasattr(self, "resolution_size_row"):
+        self.resolution_size_row.setVisible(is_custom)
     if preset is not None:
         width, height = preset
         self.output_width.blockSignals(True)
@@ -524,6 +852,21 @@ def _resolution_changed(self) -> None:
         self._update_preview_layout()
         self._update_layout_warning_status()
     self.schedule_preview()
+
+
+def create_animation(self) -> None:
+    self.status.setVisible(True)
+    _ORIGINAL_CREATE_ANIMATION(self)
+
+
+def _render_finished(self, output_path: str) -> None:
+    self.status.setVisible(True)
+    _ORIGINAL_RENDER_FINISHED(self, output_path)
+
+
+def _render_failed(self, message: str) -> None:
+    self.status.setVisible(True)
+    _ORIGINAL_RENDER_FAILED(self, message)
 
 
 def _config(self, include_time: bool = True) -> RenderConfig:
