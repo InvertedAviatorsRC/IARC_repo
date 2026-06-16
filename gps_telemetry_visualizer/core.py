@@ -27,6 +27,14 @@ from matplotlib.colors import to_rgba
 
 VALID_EXPORT_MODES = ("map", "speedometer", "both")
 VALID_SPEED_UNITS = ("kmh", "mph", "ms")
+SPEED_RECORD_THRESHOLDS = {
+    "mph": 0.5,
+    "kmh": 0.804672,
+    "ms": 0.22352,
+}
+DISTANCE_RECORD_THRESHOLD_METERS = 3.048
+RECORD_HIGHLIGHT_SECONDS = 3.0
+RECORD_HIGHLIGHT_COLOR = "#22c55e"
 
 
 @dataclass
@@ -43,6 +51,7 @@ class RenderConfig:
     max_speed: Optional[float] = None
     path_color: str = "#00d5ff"
     dot_color: str = "#ff3355"
+    start_marker_color: str = "#ffd43b"
     speedometer_color: str = "#00d5ff"
     needle_color: str = "#ff3355"
     text_color: str = "#ffffff"
@@ -71,6 +80,28 @@ class TelemetryData:
     total_duration_seconds: float
     start_time: float
     end_time: float
+
+
+@dataclass(frozen=True)
+class FrameVisualState:
+    frame_index: int
+    current_speed: float
+    current_x: float
+    current_y: float
+    top_speed: float
+    top_speed_highlight: bool
+    current_distance_m: float
+    furthest_distance_m: float
+    distance_highlight: bool
+
+
+@dataclass
+class MapArtists:
+    trail_line: object
+    start_marker: object
+    dot: object
+    distance_title: object
+    distance_value: object
 
 
 ProgressCallback = Optional[Callable[[int, int], None]]
@@ -201,33 +232,108 @@ def prepare_telemetry(csv_source, config: RenderConfig) -> TelemetryData:
     )
 
 
+def compute_frame_states(data: TelemetryData, config: RenderConfig) -> list[FrameVisualState]:
+    highlight_frames = max(1, int(round(RECORD_HIGHLIGHT_SECONDS * config.fps)))
+    speed_threshold = SPEED_RECORD_THRESHOLDS[config.speed_output_unit]
+
+    start_x = float(data.frame_x[0])
+    start_y = float(data.frame_y[0])
+    top_speed = float(data.frame_speed[0])
+    highlighted_top_speed = top_speed
+    speed_highlight_until = -1
+    furthest_distance = 0.0
+    highlighted_distance = 0.0
+    distance_highlight_until = -1
+    states = []
+
+    for frame, (x_value, y_value, speed_value) in enumerate(
+        zip(data.frame_x, data.frame_y, data.frame_speed)
+    ):
+        speed = float(speed_value)
+        if speed > top_speed:
+            top_speed = speed
+        if frame > 0 and top_speed >= highlighted_top_speed + speed_threshold:
+            highlighted_top_speed = top_speed
+            speed_highlight_until = frame + highlight_frames
+
+        distance = math.hypot(float(x_value) - start_x, float(y_value) - start_y)
+        if distance > furthest_distance:
+            furthest_distance = distance
+        if frame > 0 and furthest_distance >= highlighted_distance + DISTANCE_RECORD_THRESHOLD_METERS:
+            highlighted_distance = furthest_distance
+            distance_highlight_until = frame + highlight_frames
+
+        states.append(
+            FrameVisualState(
+                frame_index=frame,
+                current_speed=speed,
+                current_x=float(x_value),
+                current_y=float(y_value),
+                top_speed=top_speed,
+                top_speed_highlight=frame < speed_highlight_until,
+                current_distance_m=distance,
+                furthest_distance_m=furthest_distance,
+                distance_highlight=frame < distance_highlight_until,
+            )
+        )
+
+    return states
+
+
+def frame_state_at(data: TelemetryData, config: RenderConfig, frame_index: int) -> FrameVisualState:
+    states = compute_frame_states(data, config)
+    frame = max(0, min(len(states) - 1, int(frame_index)))
+    return states[frame]
+
+
+def format_speed_unit(speed_unit: str) -> str:
+    if speed_unit == "ms":
+        return "M/S"
+    return speed_unit.upper()
+
+
+def format_distance(distance_m: float, speed_unit: str) -> str:
+    distance_m = max(0.0, float(distance_m))
+    if speed_unit == "mph":
+        feet = distance_m * 3.280839895
+        if feet < 5280:
+            return "{:,.0f} FT".format(feet)
+        return "{:.1f} MI".format(feet / 5280)
+
+    if distance_m < 1000:
+        return "{:,.0f} M".format(distance_m)
+    return "{:.1f} KM".format(distance_m / 1000)
+
+
 def render_static_preview(csv_source, config: RenderConfig, frame_fraction: float = 0.65, frame_time: Optional[float] = None):
     data = prepare_telemetry(csv_source, config)
+    states = compute_frame_states(data, config)
     fig, ax_map, ax_speed = _build_figure(data, config)
     if frame_time is None:
         frame = int(len(data.frame_x) * frame_fraction)
     else:
         frame = int(round(max(0.0, frame_time) * config.fps))
     frame = max(0, min(len(data.frame_x) - 1, frame))
+    state = states[frame]
 
     if ax_map is not None:
-        line, dot = _setup_map_artists(ax_map, data, config)
-        line.set_data(data.frame_x[: frame + 1], data.frame_y[: frame + 1])
-        dot.set_data([data.frame_x[frame]], [data.frame_y[frame]])
+        map_artists = _setup_map_artists(ax_map, data, config)
+        _update_map_artists(map_artists, data, config, frame, state)
 
     if ax_speed is not None:
-        draw_speedometer(ax_speed, data.frame_speed[frame], data.max_speed, config)
+        draw_speedometer(ax_speed, state.current_speed, data.max_speed, config, state)
 
-    fig.tight_layout(pad=0.2)
+    _finalize_figure(fig)
     return fig
 
 
 def render_preview_frames(csv_source, config: RenderConfig, frame_count: int = 28, dpi: int = 110) -> Tuple[list[bytes], TelemetryData]:
     data = prepare_telemetry(csv_source, config)
+    states = compute_frame_states(data, config)
     fig, ax_map, ax_speed = _build_figure(data, config)
-    trail_line = dot = None
+    map_artists = None
     if ax_map is not None:
-        trail_line, dot = _setup_map_artists(ax_map, data, config)
+        map_artists = _setup_map_artists(ax_map, data, config)
 
     frame_count = max(1, min(int(frame_count), len(data.frame_x)))
     frame_indexes = np.linspace(0, len(data.frame_x) - 1, frame_count, dtype=int)
@@ -235,13 +341,12 @@ def render_preview_frames(csv_source, config: RenderConfig, frame_count: int = 2
 
     for frame in frame_indexes:
         if ax_map is not None:
-            trail_line.set_data(data.frame_x[: frame + 1], data.frame_y[: frame + 1])
-            dot.set_data([data.frame_x[frame]], [data.frame_y[frame]])
+            _update_map_artists(map_artists, data, config, frame, states[frame])
 
         if ax_speed is not None:
-            draw_speedometer(ax_speed, data.frame_speed[frame], data.max_speed, config)
+            draw_speedometer(ax_speed, states[frame].current_speed, data.max_speed, config, states[frame])
 
-        fig.tight_layout(pad=0.2)
+        _finalize_figure(fig)
         buffer = io.BytesIO()
         fig.savefig(
             buffer,
@@ -262,25 +367,34 @@ def render_animation(csv_source, output_path, config: RenderConfig, progress_cal
         config = replace(config, transparent=False)
 
     data = prepare_telemetry(csv_source, config)
+    states = compute_frame_states(data, config)
     output.parent.mkdir(parents=True, exist_ok=True)
 
     _configure_ffmpeg()
 
     fig, ax_map, ax_speed = _build_figure(data, config)
-    trail_line = dot = None
+    map_artists = None
     if ax_map is not None:
-        trail_line, dot = _setup_map_artists(ax_map, data, config)
+        map_artists = _setup_map_artists(ax_map, data, config)
 
     def update(frame):
         artists = []
+        state = states[frame]
 
         if ax_map is not None:
-            trail_line.set_data(data.frame_x[: frame + 1], data.frame_y[: frame + 1])
-            dot.set_data([data.frame_x[frame]], [data.frame_y[frame]])
-            artists.extend([trail_line, dot])
+            _update_map_artists(map_artists, data, config, frame, state)
+            artists.extend(
+                [
+                    map_artists.trail_line,
+                    map_artists.start_marker,
+                    map_artists.dot,
+                    map_artists.distance_title,
+                    map_artists.distance_value,
+                ]
+            )
 
         if ax_speed is not None:
-            draw_speedometer(ax_speed, data.frame_speed[frame], data.max_speed, config)
+            draw_speedometer(ax_speed, state.current_speed, data.max_speed, config, state)
             artists.extend(ax_speed.patches)
             artists.extend(ax_speed.lines)
             artists.extend(ax_speed.texts)
@@ -305,12 +419,18 @@ def render_animation(csv_source, output_path, config: RenderConfig, progress_cal
     return output
 
 
-def draw_speedometer(ax, speed: float, max_speed: float, config: RenderConfig) -> None:
+def draw_speedometer(
+    ax,
+    speed: float,
+    max_speed: float,
+    config: RenderConfig,
+    state: Optional[FrameVisualState] = None,
+) -> None:
     ax.clear()
     ax.set_aspect("equal")
     ax.axis("off")
     ax.set_xlim(-1.25, 1.25)
-    ax.set_ylim(-0.35, 1.25)
+    ax.set_ylim(-0.62, 1.25)
     ax.set_facecolor((0, 0, 0, 0) if config.transparent else to_rgba(config.background_color))
 
     arc = patches.Arc(
@@ -369,12 +489,15 @@ def draw_speedometer(ax, speed: float, max_speed: float, config: RenderConfig) -
     ax.text(
         0,
         0.25,
-        config.speed_output_unit.upper(),
+        format_speed_unit(config.speed_output_unit),
         ha="center",
         va="center",
         fontsize=11,
         color=to_rgba(config.text_color, 0.75),
     )
+
+    if state is not None:
+        _draw_top_speed_indicator(ax, state, config)
 
 
 def default_output_name(export_mode: str, extension: str) -> str:
@@ -589,9 +712,107 @@ def _configure_map_axis(ax_map, data: TelemetryData, config: RenderConfig) -> No
 
 def _setup_map_artists(ax_map, data: TelemetryData, config: RenderConfig):
     _configure_map_axis(ax_map, data, config)
-    trail_line, = ax_map.plot([], [], linewidth=4, color=to_rgba(config.path_color, 0.85))
-    dot, = ax_map.plot([], [], "o", markersize=14, color=to_rgba(config.dot_color, 1.0))
-    return trail_line, dot
+    trail_line, = ax_map.plot([], [], linewidth=4, color=to_rgba(config.path_color, 0.85), zorder=1)
+    start_marker, = ax_map.plot(
+        [data.frame_x[0]],
+        [data.frame_y[0]],
+        marker="*",
+        linestyle="None",
+        markersize=20,
+        markeredgewidth=0,
+        color=to_rgba(config.start_marker_color, 1.0),
+        zorder=3,
+    )
+    dot, = ax_map.plot([], [], "o", markersize=14, color=to_rgba(config.dot_color, 1.0), zorder=4)
+    distance_title = ax_map.text(
+        0.5,
+        -0.075,
+        "FURTHEST DISTANCE",
+        transform=ax_map.transAxes,
+        ha="center",
+        va="center",
+        fontsize=10,
+        fontweight="bold",
+        clip_on=False,
+        zorder=5,
+    )
+    distance_value = ax_map.text(
+        0.5,
+        -0.145,
+        "",
+        transform=ax_map.transAxes,
+        ha="center",
+        va="center",
+        fontsize=16,
+        fontweight="bold",
+        clip_on=False,
+        zorder=5,
+    )
+    return MapArtists(trail_line, start_marker, dot, distance_title, distance_value)
+
+
+def _update_map_artists(
+    artists: MapArtists,
+    data: TelemetryData,
+    config: RenderConfig,
+    frame: int,
+    state: FrameVisualState,
+) -> None:
+    artists.trail_line.set_data(data.frame_x[: frame + 1], data.frame_y[: frame + 1])
+    artists.start_marker.set_data([data.frame_x[0]], [data.frame_y[0]])
+    artists.dot.set_data([state.current_x], [state.current_y])
+    _update_record_texts(
+        artists.distance_title,
+        artists.distance_value,
+        "FURTHEST DISTANCE",
+        format_distance(state.furthest_distance_m, config.speed_output_unit),
+        state.distance_highlight,
+        config,
+    )
+
+
+def _draw_top_speed_indicator(ax, state: FrameVisualState, config: RenderConfig) -> None:
+    title = ax.text(
+        0,
+        -0.33,
+        "TOP SPEED",
+        ha="center",
+        va="center",
+        fontsize=10,
+        fontweight="bold",
+    )
+    value = ax.text(
+        0,
+        -0.48,
+        "{:.1f} {}".format(state.top_speed, format_speed_unit(config.speed_output_unit)),
+        ha="center",
+        va="center",
+        fontsize=16,
+        fontweight="bold",
+    )
+    _update_record_texts(
+        title,
+        value,
+        "TOP SPEED",
+        "{:.1f} {}".format(state.top_speed, format_speed_unit(config.speed_output_unit)),
+        state.top_speed_highlight,
+        config,
+    )
+
+
+def _update_record_texts(title_text, value_text, title: str, value: str, highlighted: bool, config: RenderConfig) -> None:
+    alpha = 1.0 if highlighted else 0.5
+    color = RECORD_HIGHLIGHT_COLOR if highlighted else config.text_color
+    rgba = to_rgba(color, alpha)
+    title_text.set_text(title)
+    title_text.set_color(rgba)
+    value_text.set_text(value)
+    value_text.set_color(rgba)
+
+
+def _finalize_figure(fig) -> None:
+    fig.tight_layout(pad=0.25)
+    fig.subplots_adjust(bottom=0.18)
 
 
 def _nice_tick_step(max_speed: float) -> int:
