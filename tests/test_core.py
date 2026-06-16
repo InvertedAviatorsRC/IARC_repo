@@ -26,6 +26,7 @@ from gps_telemetry_visualizer.core import (
     preview_to_output_coordinates,
     render_preview_frames,
     render_static_preview,
+    resize_layout_element_from_corner,
     scale_overlay_layout,
 )
 from gps_telemetry_visualizer.presets import LayoutPreset, load_layout_presets, save_layout_preset
@@ -250,7 +251,7 @@ class CoreTests(unittest.TestCase):
 
     def test_layout_positions_are_independent_and_convert_to_bounds(self):
         layout = OverlayLayout(
-            map=ElementLayout(100, 200, True),
+            map=ElementLayout(100, 200, True, 1.5),
             speedometer=ElementLayout(500, 300, True),
             top_speed=ElementLayout(700, 800, True),
             furthest_distance=ElementLayout(900, 400, True),
@@ -264,6 +265,39 @@ class CoreTests(unittest.TestCase):
         map_bounds = compute_element_bounds("map", layout, canvas)
         self.assertAlmostEqual(map_bounds.left, 100 - map_bounds.width / 2)
         self.assertAlmostEqual(map_bounds.top, 200 - map_bounds.height / 2)
+        self.assertAlmostEqual(map_bounds.scale, 1.5)
+        self.assertGreater(map_bounds.width, compute_element_bounds("speedometer", default_overlay_layout(1920, 1080), canvas).width)
+
+    def test_resize_from_each_corner_keeps_opposite_corner_and_updates_scale(self):
+        canvas = CanvasConfig(1000, 600)
+        layout = OverlayLayout(map=ElementLayout(500, 300, True, 1.0))
+        original = compute_element_bounds("map", layout, canvas)
+        target_scale = 1.5
+        cases = {
+            "top_left": ((original.right, original.bottom), (original.right - original.width * target_scale, original.bottom - original.height * target_scale)),
+            "top_right": ((original.left, original.bottom), (original.left + original.width * target_scale, original.bottom - original.height * target_scale)),
+            "bottom_left": ((original.right, original.top), (original.right - original.width * target_scale, original.top + original.height * target_scale)),
+            "bottom_right": ((original.left, original.top), (original.left + original.width * target_scale, original.top + original.height * target_scale)),
+        }
+
+        for corner, (fixed, dragged) in cases.items():
+            resized = resize_layout_element_from_corner(layout, "map", canvas, corner, dragged[0], dragged[1])
+            box = compute_element_bounds("map", resized, canvas)
+            self.assertAlmostEqual(getattr(box, "left" if "right" in corner else "right"), fixed[0])
+            self.assertAlmostEqual(getattr(box, "top" if "bottom" in corner else "bottom"), fixed[1])
+            self.assertAlmostEqual(resized.map.scale, target_scale)
+
+    def test_scale_minimum_no_maximum_and_scaled_warnings(self):
+        canvas = CanvasConfig(1000, 600)
+        layout = OverlayLayout(map=ElementLayout(500, 300, True, 1.0))
+        box = compute_element_bounds("map", layout, canvas)
+        tiny = resize_layout_element_from_corner(layout, "map", canvas, "bottom_right", box.left + 1, box.top + 1)
+        self.assertAlmostEqual(tiny.map.scale, 0.1)
+
+        huge = OverlayLayout(map=ElementLayout(500, 300, True, 8.0))
+        self.assertEqual(huge.map.scale, 8.0)
+        warnings = layout_warnings(huge, canvas)
+        self.assertTrue(any("significantly larger" in warning for warning in warnings))
 
     def test_preview_coordinates_and_resolution_scaling(self):
         canvas = CanvasConfig(3840, 2160)
@@ -273,6 +307,7 @@ class CoreTests(unittest.TestCase):
         scaled = scale_overlay_layout(layout, 1920, 1080, 3840, 2160)
         self.assertEqual(scaled.map.x, 1920)
         self.assertEqual(scaled.map.y, 1080)
+        self.assertEqual(scaled.map.scale, 1.0)
 
     def test_hidden_elements_are_excluded_but_keep_positions(self):
         csv_text = (
@@ -332,6 +367,7 @@ class CoreTests(unittest.TestCase):
             self.assertIn("Race", loaded)
             self.assertEqual(loaded["Race"].layout.map.x, 123)
             self.assertFalse(loaded["Race"].layout.map.visible)
+            self.assertEqual(loaded["Race"].layout.map.scale, 1.0)
 
             path.write_text("{bad json", encoding="utf-8")
             self.assertEqual(load_layout_presets(path), {})
@@ -340,6 +376,12 @@ class CoreTests(unittest.TestCase):
             old = load_layout_presets(path)
             self.assertEqual(old["Old"].layout.map.x, 10)
             self.assertGreater(old["Old"].layout.map.y, 0)
+            self.assertEqual(old["Old"].layout.map.scale, 1.0)
+
+            scaled_layout = OverlayLayout(map=ElementLayout(111, 222, True, 1.75))
+            save_layout_preset(LayoutPreset("Scaled", 1920, 1080, scaled_layout), path)
+            loaded_again = load_layout_presets(path)
+            self.assertAlmostEqual(loaded_again["Scaled"].layout.map.scale, 1.75)
 
     def test_default_layouts_are_valid_for_common_aspects(self):
         for width, height in ((1920, 1080), (1080, 1920), (1080, 1080)):
