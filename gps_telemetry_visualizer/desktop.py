@@ -343,14 +343,16 @@ class MainWindow(QMainWindow):
         color_grid.setVerticalSpacing(8)
         self.path_color = ColorButton("Path", "#00d5ff")
         self.speedometer_color = ColorButton("Speedometer", "#00d5ff")
+        self.start_marker_color = ColorButton("Start star", "#ffd43b")
         self.dot_color = ColorButton("Position dot", "#ff3355")
         self.needle_color = ColorButton("Needle", "#ff3355")
         self.background_color = ColorButton("Background", "#101820")
         color_grid.addWidget(self.path_color, 0, 0)
         color_grid.addWidget(self.speedometer_color, 0, 1)
-        color_grid.addWidget(self.dot_color, 1, 0)
-        color_grid.addWidget(self.needle_color, 1, 1)
-        color_grid.addWidget(self.background_color, 2, 0, 1, 2)
+        color_grid.addWidget(self.start_marker_color, 1, 0)
+        color_grid.addWidget(self.dot_color, 1, 1)
+        color_grid.addWidget(self.needle_color, 2, 0)
+        color_grid.addWidget(self.background_color, 2, 1)
         layout.addLayout(color_grid)
 
         self.transparent = QCheckBox("Transparent background")
@@ -408,6 +410,7 @@ class MainWindow(QMainWindow):
         for button in [
             self.path_color,
             self.speedometer_color,
+            self.start_marker_color,
             self.dot_color,
             self.needle_color,
             self.background_color,
@@ -677,6 +680,7 @@ class MainWindow(QMainWindow):
             max_speed=None if self.auto_max_speed.isChecked() else self.max_speed.value(),
             path_color=self.path_color.color,
             dot_color=self.dot_color.color,
+            start_marker_color=self.start_marker_color.color,
             speedometer_color=self.speedometer_color.color,
             needle_color=self.needle_color.color,
             background_color=self.background_color.color,
