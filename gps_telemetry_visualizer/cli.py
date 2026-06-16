@@ -22,6 +22,7 @@ def main() -> None:
     parser.add_argument("--max-speed", type=float)
     parser.add_argument("--path-color", default="#00d5ff")
     parser.add_argument("--dot-color", default="#ff3355")
+    parser.add_argument("--start-marker-color", default="#ffd43b")
     parser.add_argument("--speedometer-color", default="#00d5ff")
     parser.add_argument("--needle-color", default="#ff3355")
     parser.add_argument("--opaque", action="store_true", help="Render with an opaque dark background")
@@ -42,6 +43,7 @@ def main() -> None:
         max_speed=args.max_speed,
         path_color=args.path_color,
         dot_color=args.dot_color,
+        start_marker_color=args.start_marker_color,
         speedometer_color=args.speedometer_color,
         needle_color=args.needle_color,
         transparent=not args.opaque,
