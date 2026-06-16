@@ -28,3 +28,6 @@ gps-vis-render = "gps_telemetry_visualizer.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["gps_telemetry_visualizer*"]
+
+[tool.setuptools.package-data]
+gps_telemetry_visualizer = ["layout_editor_component/*.html"]
