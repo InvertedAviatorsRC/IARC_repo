@@ -306,6 +306,7 @@ def main() -> None:
 
 
 def _patched_init(self) -> None:
+    desktop.QMainWindow.__init__(self)
     self.setWindowTitle("GPS Telemetry Visualizer")
     self.resize(1500, 860)
     self.setMinimumSize(1240, 760)
