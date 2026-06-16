@@ -44,6 +44,16 @@ from gps_telemetry_visualizer.core import (
 
 
 TIME_SLIDER_SCALE = 10
+RESOLUTION_PRESETS = {
+    "3840 x 2160 - 4K UHD": (3840, 2160),
+    "2560 x 1440 - 1440p": (2560, 1440),
+    "1920 x 1080 - 1080p": (1920, 1080),
+    "1280 x 720 - 720p": (1280, 720),
+    "1080 x 1920 - vertical 1080p": (1080, 1920),
+    "2160 x 3840 - vertical 4K": (2160, 3840),
+    "1080 x 1080 - square": (1080, 1080),
+    "Custom": None,
+}
 
 
 class CsvDropZone(QFrame):
@@ -218,6 +228,25 @@ class MainWindow(QMainWindow):
         self.file_type.currentTextChanged.connect(self._file_type_changed)
         layout.addWidget(QLabel("File type"))
         layout.addWidget(self.file_type)
+
+        self.resolution_preset = QComboBox()
+        self.resolution_preset.addItems(list(RESOLUTION_PRESETS))
+        self.resolution_preset.setCurrentText("1920 x 1080 - 1080p")
+        self.resolution_preset.currentTextChanged.connect(self._resolution_changed)
+        layout.addWidget(QLabel("Resolution"))
+        layout.addWidget(self.resolution_preset)
+
+        resolution_row = QHBoxLayout()
+        self.output_width = QSpinBox()
+        self.output_width.setRange(1, 10000)
+        self.output_width.setValue(1920)
+        self.output_height = QSpinBox()
+        self.output_height.setRange(1, 10000)
+        self.output_height.setValue(1080)
+        resolution_row.addWidget(self.output_width)
+        resolution_row.addWidget(self.output_height)
+        layout.addLayout(resolution_row)
+        self._resolution_changed()
 
         self.output_name = QLineEdit(default_output_name("both", "mp4"))
         layout.addWidget(QLabel("Output file name"))
@@ -398,6 +427,9 @@ class MainWindow(QMainWindow):
             self.max_speed,
             self.file_type,
             self.transparent,
+            self.resolution_preset,
+            self.output_width,
+            self.output_height,
         ]
         for widget in widgets:
             if hasattr(widget, "currentTextChanged"):
@@ -645,6 +677,21 @@ class MainWindow(QMainWindow):
         self._update_transparency_controls()
         self.schedule_preview()
 
+    def _resolution_changed(self) -> None:
+        preset = RESOLUTION_PRESETS.get(self.resolution_preset.currentText())
+        is_custom = preset is None
+        self.output_width.setEnabled(is_custom)
+        self.output_height.setEnabled(is_custom)
+        if preset is not None:
+            width, height = preset
+            self.output_width.blockSignals(True)
+            self.output_height.blockSignals(True)
+            self.output_width.setValue(width)
+            self.output_height.setValue(height)
+            self.output_width.blockSignals(False)
+            self.output_height.blockSignals(False)
+        self.schedule_preview()
+
     def _update_transparency_controls(self) -> None:
         is_mov = self.file_type.currentText() == "mov"
         if is_mov:
@@ -687,6 +734,8 @@ class MainWindow(QMainWindow):
             transparent=transparent,
             start_time=start_time,
             end_time=end_time,
+            output_width=self.output_width.value(),
+            output_height=self.output_height.value(),
         )
 
 
