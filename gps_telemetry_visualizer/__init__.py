@@ -25,6 +25,7 @@ from gps_telemetry_visualizer.core import (
     render_animation,
     render_preview_frames,
     render_static_preview,
+    resize_layout_element_from_corner,
     scale_overlay_layout,
 )
 
@@ -53,6 +54,7 @@ __all__ = [
     "render_animation",
     "render_preview_frames",
     "render_static_preview",
+    "resize_layout_element_from_corner",
     "scale_overlay_layout",
 ]
 
