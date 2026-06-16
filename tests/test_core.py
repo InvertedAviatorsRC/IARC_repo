@@ -1,20 +1,34 @@
 import io
+import tempfile
 import unittest
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 from gps_telemetry_visualizer.core import (
+    CanvasConfig,
+    ElementLayout,
+    OverlayLayout,
     RenderConfig,
     TelemetryData,
+    compute_element_bounds,
     compute_frame_states,
+    compute_layout_bounds,
     convert_speed,
+    default_overlay_layout,
     format_distance,
+    layout_warnings,
+    overlay_layout_from_dict,
+    overlay_layout_to_dict,
     parse_gps,
     prepare_telemetry,
+    preview_to_output_coordinates,
     render_preview_frames,
     render_static_preview,
+    scale_overlay_layout,
 )
+from gps_telemetry_visualizer.presets import LayoutPreset, load_layout_presets, save_layout_preset
 
 
 def _telemetry(speeds, x_values=None, y_values=None):
@@ -233,6 +247,131 @@ class CoreTests(unittest.TestCase):
             self.assertGreater(len(fig.axes), 0)
             self.assertEqual(fig.get_facecolor()[3], 0)
             plt.close(fig)
+
+    def test_layout_positions_are_independent_and_convert_to_bounds(self):
+        layout = OverlayLayout(
+            map=ElementLayout(100, 200, True),
+            speedometer=ElementLayout(500, 300, True),
+            top_speed=ElementLayout(700, 800, True),
+            furthest_distance=ElementLayout(900, 400, True),
+        )
+        canvas = CanvasConfig(1920, 1080)
+        bounds = compute_layout_bounds(layout, canvas)
+
+        self.assertEqual(bounds["map"].x, 100)
+        self.assertEqual(bounds["speedometer"].x, 500)
+        self.assertNotEqual(bounds["map"].x, bounds["top_speed"].x)
+        map_bounds = compute_element_bounds("map", layout, canvas)
+        self.assertAlmostEqual(map_bounds.left, 100 - map_bounds.width / 2)
+        self.assertAlmostEqual(map_bounds.top, 200 - map_bounds.height / 2)
+
+    def test_preview_coordinates_and_resolution_scaling(self):
+        canvas = CanvasConfig(3840, 2160)
+        self.assertEqual(preview_to_output_coordinates(100, 50, 960, 540, canvas), (400, 200))
+
+        layout = OverlayLayout(map=ElementLayout(960, 540, True))
+        scaled = scale_overlay_layout(layout, 1920, 1080, 3840, 2160)
+        self.assertEqual(scaled.map.x, 1920)
+        self.assertEqual(scaled.map.y, 1080)
+
+    def test_hidden_elements_are_excluded_but_keep_positions(self):
+        csv_text = (
+            "GPS,GSpd(kmh),Hdg(°),Alt(m)\n"
+            "44.0 -93.0,0,0,200\n"
+            "44.0001 -93.0001,36,10,201\n"
+        )
+        layout = OverlayLayout(
+            map=ElementLayout(300, 300, False),
+            speedometer=ElementLayout(600, 300, True),
+            top_speed=ElementLayout(600, 600, False),
+            furthest_distance=ElementLayout(300, 600, False),
+        )
+        fig = render_static_preview(
+            io.StringIO(csv_text),
+            RenderConfig(output_width=1280, output_height=720, layout=layout),
+            frame_time=0.5,
+        )
+
+        self.assertEqual(layout.map.x, 300)
+        self.assertEqual(len(fig.axes), 1)
+        plt.close(fig)
+
+    def test_layout_warnings_for_offscreen_and_overlap(self):
+        canvas = CanvasConfig(1920, 1080)
+        layout = OverlayLayout(
+            map=ElementLayout(50, 540, True),
+            speedometer=ElementLayout(80, 540, True),
+            top_speed=ElementLayout(4000, 4000, True),
+            furthest_distance=ElementLayout(1500, 900, False),
+        )
+        warnings = layout_warnings(layout, canvas)
+
+        self.assertTrue(any("Map is partially outside" in warning for warning in warnings))
+        self.assertTrue(any("Top-speed indicator is completely outside" in warning for warning in warnings))
+        self.assertTrue(any("Map overlaps speedometer" in warning for warning in warnings))
+        self.assertFalse(any("furthest-distance" in warning.lower() for warning in warnings))
+
+    def test_layout_warnings_ignore_non_overlapping_elements(self):
+        canvas = CanvasConfig(1920, 1080)
+        layout = OverlayLayout(
+            map=ElementLayout(420, 460, True),
+            speedometer=ElementLayout(1480, 460, True),
+            top_speed=ElementLayout(1480, 900, True),
+            furthest_distance=ElementLayout(420, 900, True),
+        )
+
+        self.assertEqual(layout_warnings(layout, canvas), [])
+
+    def test_presets_save_reload_invalid_and_old_formats(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "presets.json"
+            layout = OverlayLayout(map=ElementLayout(123, 456, False))
+            save_layout_preset(LayoutPreset("Race", 1920, 1080, layout), path)
+            loaded = load_layout_presets(path)
+
+            self.assertIn("Race", loaded)
+            self.assertEqual(loaded["Race"].layout.map.x, 123)
+            self.assertFalse(loaded["Race"].layout.map.visible)
+
+            path.write_text("{bad json", encoding="utf-8")
+            self.assertEqual(load_layout_presets(path), {})
+
+            path.write_text('{"presets": {"Old": {"layout": {"map": {"x": 10}}}}}', encoding="utf-8")
+            old = load_layout_presets(path)
+            self.assertEqual(old["Old"].layout.map.x, 10)
+            self.assertGreater(old["Old"].layout.map.y, 0)
+
+    def test_default_layouts_are_valid_for_common_aspects(self):
+        for width, height in ((1920, 1080), (1080, 1920), (1080, 1080)):
+            layout = default_overlay_layout(width, height, "both")
+            bounds = compute_layout_bounds(layout, CanvasConfig(width, height))
+            self.assertEqual(set(bounds), {"map", "speedometer", "top_speed", "furthest_distance"})
+            self.assertTrue(all(box.width > 0 and box.height > 0 for box in bounds.values()))
+
+    def test_final_preview_canvas_uses_exact_selected_dimensions(self):
+        csv_text = (
+            "GPS,GSpd(kmh),Hdg(°),Alt(m)\n"
+            "44.0 -93.0,0,0,200\n"
+            "44.0001 -93.0001,36,10,201\n"
+        )
+        config = RenderConfig(output_width=640, output_height=360, export_mode="both")
+        fig = render_static_preview(io.StringIO(csv_text), config, frame_time=0.5)
+
+        self.assertEqual(tuple(fig.canvas.get_width_height()), (640, 360))
+        plt.close(fig)
+
+    def test_layout_dict_round_trip_keeps_coordinates(self):
+        layout = OverlayLayout(
+            map=ElementLayout(1, 2, False),
+            speedometer=ElementLayout(3, 4, True),
+            top_speed=ElementLayout(5, 6, False),
+            furthest_distance=ElementLayout(7, 8, True),
+        )
+        restored = overlay_layout_from_dict(overlay_layout_to_dict(layout), 1920, 1080)
+
+        self.assertEqual(restored.map.x, 1)
+        self.assertEqual(restored.furthest_distance.y, 8)
+        self.assertFalse(restored.top_speed.visible)
 
 
 if __name__ == "__main__":
