@@ -63,8 +63,9 @@ def run_app() -> None:
     _apply_pending_preset_load(st)
 
     st.title("GPS Telemetry Visualizer")
+    create_clicked = False
 
-    upload_col, controls_col, preview_col = st.columns([0.92, 1.15, 1.35], gap="large")
+    upload_col, controls_col, preview_col = st.columns([0.82, 0.95, 2.2], gap="medium")
 
     with upload_col:
         st.subheader("CSV")
@@ -171,16 +172,15 @@ def run_app() -> None:
             layout=clone_overlay_layout(st.session_state.overlay_layout),
         )
 
-        create_clicked = st.button("Create", type="primary", use_container_width=True)
-
     config = base_config
 
     with preview_col:
-        st.subheader("Preview")
+        st.markdown('<div class="preview-heading">Preview</div>', unsafe_allow_html=True)
         preview_slot = st.empty()
 
         if uploaded_file is None:
             preview_slot.info("Upload a CSV to preview the map and speedometer.")
+            create_clicked = st.button("Create", type="primary", use_container_width=True, disabled=True)
             _show_layout_warnings(st, base_config)
             _layout_numeric_controls(st, output_width, output_height, export_mode)
         else:
@@ -193,6 +193,7 @@ def run_app() -> None:
                     duration_data.total_duration_seconds,
                     "{}:{:.3f}".format(uploaded_file.name, duration_data.total_duration_seconds),
                 )
+                create_clicked = st.button("Create", type="primary", use_container_width=True)
 
                 config = replace(base_config, start_time=trim_start, end_time=trim_end)
                 data = prepare_telemetry(io.BytesIO(preview_source), config)
@@ -227,6 +228,7 @@ def run_app() -> None:
                 _layout_numeric_controls(st, output_width, output_height, export_mode)
             except Exception as exc:
                 preview_slot.error(str(exc))
+                create_clicked = st.button("Create", type="primary", use_container_width=True, disabled=True)
                 _layout_numeric_controls(st, output_width, output_height, export_mode)
 
     if create_clicked:
@@ -600,15 +602,40 @@ def _inject_css(st) -> None:
         """
         <style>
         .block-container {
-            padding-top: 1.4rem;
-            padding-bottom: 2rem;
-            max-width: 1480px;
+            padding-top: 0.8rem;
+            padding-bottom: 1.2rem;
+            max-width: min(1880px, 98vw);
+            overflow-x: hidden;
+        }
+        [data-testid="stHorizontalBlock"],
+        [data-testid="column"],
+        [data-testid="stVerticalBlock"] {
+            min-width: 0;
+            max-width: 100%;
+        }
+        [data-testid="column"] {
+            overflow-x: hidden;
+        }
+        .preview-heading {
+            font-size: 1.05rem;
+            font-weight: 700;
+            line-height: 1.15;
+            margin: 0 0 0.45rem 0;
+            color: rgb(245, 248, 251);
+        }
+        div[data-testid="stMarkdownContainer"] h4 {
+            margin-top: 0.45rem;
+            margin-bottom: 0.25rem;
         }
         [data-testid="stFileUploaderDropzone"] {
             min-height: 190px;
             border-radius: 8px;
             border: 1px dashed rgba(80, 130, 180, 0.8);
             background: rgba(18, 31, 43, 0.04);
+        }
+        iframe[title="gps_layout_editor"] {
+            width: 100%;
+            overflow: hidden;
         }
         div.stButton > button {
             height: 3rem;
