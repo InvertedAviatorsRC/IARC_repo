@@ -619,7 +619,7 @@ def _inject_css(st) -> None:
         }
         .st-key-preview-workspace {
             height: calc(100vh - 6rem);
-            height: calc(100dvh - 6rem);
+            height: calc(100dvh - 4.5rem);
             min-height: 0;
             max-width: 100%;
             overflow-x: hidden;
@@ -633,8 +633,8 @@ def _inject_css(st) -> None:
             overflow-y: auto;
         }
         .st-key-preview-workspace [data-testid="stElementContainer"]:has(iframe[title="gps_layout_editor"]) {
-            flex: 1 0 460px;
-            min-height: 460px;
+            flex: 1 1 auto;
+            min-height: 620px;
             min-width: 0;
             display: flex;
             flex-direction: column;
