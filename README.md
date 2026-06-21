@@ -99,6 +99,9 @@ Use `.mov` when you want a ProRes 4444 overlay with transparency for video editi
 
 The downloadable apps above are the easiest option. These instructions are for developers who want to run or modify the source code.
 
+For the recommended local development workflow, including fast Streamlit UI testing,
+see [DEVELOPMENT.md](DEVELOPMENT.md).
+
 ### Requirements
 
 - Python 3.9 or newer

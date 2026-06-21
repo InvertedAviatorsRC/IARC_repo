@@ -65,7 +65,7 @@ def run_app() -> None:
     st.title("GPS Telemetry Visualizer")
     create_clicked = False
 
-    upload_col, controls_col, preview_col = st.columns([0.82, 0.95, 2.2], gap="medium")
+    upload_col, controls_col, preview_col = st.columns([0.76, 0.9, 2.45], gap="medium")
 
     with upload_col:
         st.subheader("CSV")
@@ -175,61 +175,62 @@ def run_app() -> None:
     config = base_config
 
     with preview_col:
-        st.markdown('<div class="preview-heading">Preview</div>', unsafe_allow_html=True)
-        preview_slot = st.empty()
+        with st.container(key="preview-workspace", border=False):
+            st.markdown('<div class="preview-heading">Preview</div>', unsafe_allow_html=True)
+            preview_slot = st.empty()
 
-        if uploaded_file is None:
-            preview_slot.info("Upload a CSV to preview the map and speedometer.")
-            create_clicked = st.button("Create", type="primary", use_container_width=True, disabled=True)
-            _show_layout_warnings(st, base_config)
-            _layout_numeric_controls(st, output_width, output_height, export_mode)
-        else:
-            try:
-                preview_source = _uploaded_bytes(uploaded_file)
-                duration_config = replace(base_config, start_time=0.0, end_time=None)
-                duration_data = prepare_telemetry(io.BytesIO(preview_source), duration_config)
-                trim_start, trim_end, playhead_time = _timeline_controls(
-                    st,
-                    duration_data.total_duration_seconds,
-                    "{}:{:.3f}".format(uploaded_file.name, duration_data.total_duration_seconds),
-                )
-                create_clicked = st.button("Create", type="primary", use_container_width=True)
-
-                config = replace(base_config, start_time=trim_start, end_time=trim_end)
-                data = prepare_telemetry(io.BytesIO(preview_source), config)
-                preview_time = max(0.0, playhead_time - trim_start)
-                fig = render_static_preview(io.BytesIO(preview_source), config, frame_time=preview_time)
-                preview_image = _figure_data_url(fig)
-                plt.close(fig)
-                with preview_slot.container():
-                    drag_result = layout_editor(
-                        preview_image,
-                        output_width,
-                        output_height,
-                        _component_elements(config),
-                        selected=st.session_state.get("selected_layout_element", "map"),
-                        key="layout_editor",
-                    )
-                if _apply_drag_result(st, drag_result):
-                    st.rerun()
-
-                st.caption(
-                    "{} valid GPS rows from {} total rows. Previewing {}. Export trim: {} to {}. Max speed: {:.1f} {}.".format(
-                        data.valid_rows,
-                        data.source_rows,
-                        _format_seconds(playhead_time),
-                        _format_seconds(trim_start),
-                        _format_seconds(data.end_time),
-                        data.max_speed,
-                        config.speed_output_unit.upper(),
-                    )
-                )
-                _show_layout_warnings(st, config)
-                _layout_numeric_controls(st, output_width, output_height, export_mode)
-            except Exception as exc:
-                preview_slot.error(str(exc))
+            if uploaded_file is None:
+                preview_slot.info("Upload a CSV to preview the map and speedometer.")
                 create_clicked = st.button("Create", type="primary", use_container_width=True, disabled=True)
+                _show_layout_warnings(st, base_config)
                 _layout_numeric_controls(st, output_width, output_height, export_mode)
+            else:
+                try:
+                    preview_source = _uploaded_bytes(uploaded_file)
+                    duration_config = replace(base_config, start_time=0.0, end_time=None)
+                    duration_data = prepare_telemetry(io.BytesIO(preview_source), duration_config)
+                    trim_start, trim_end, playhead_time = _timeline_controls(
+                        st,
+                        duration_data.total_duration_seconds,
+                        "{}:{:.3f}".format(uploaded_file.name, duration_data.total_duration_seconds),
+                    )
+                    create_clicked = st.button("Create", type="primary", use_container_width=True)
+
+                    config = replace(base_config, start_time=trim_start, end_time=trim_end)
+                    data = prepare_telemetry(io.BytesIO(preview_source), config)
+                    preview_time = max(0.0, playhead_time - trim_start)
+                    fig = render_static_preview(io.BytesIO(preview_source), config, frame_time=preview_time)
+                    preview_image = _figure_data_url(fig)
+                    plt.close(fig)
+                    with preview_slot.container():
+                        drag_result = layout_editor(
+                            preview_image,
+                            output_width,
+                            output_height,
+                            _component_elements(config),
+                            selected=st.session_state.get("selected_layout_element", "map"),
+                            key="layout_editor",
+                        )
+                    if _apply_drag_result(st, drag_result):
+                        st.rerun()
+
+                    st.caption(
+                        "{} valid GPS rows from {} total rows. Previewing {}. Export trim: {} to {}. Max speed: {:.1f} {}.".format(
+                            data.valid_rows,
+                            data.source_rows,
+                            _format_seconds(playhead_time),
+                            _format_seconds(trim_start),
+                            _format_seconds(data.end_time),
+                            data.max_speed,
+                            config.speed_output_unit.upper(),
+                        )
+                    )
+                    _show_layout_warnings(st, config)
+                    _layout_numeric_controls(st, output_width, output_height, export_mode)
+                except Exception as exc:
+                    preview_slot.error(str(exc))
+                    create_clicked = st.button("Create", type="primary", use_container_width=True, disabled=True)
+                    _layout_numeric_controls(st, output_width, output_height, export_mode)
 
     if create_clicked:
         if uploaded_file is None:
@@ -616,6 +617,34 @@ def _inject_css(st) -> None:
         [data-testid="column"] {
             overflow-x: hidden;
         }
+        .st-key-preview-workspace {
+            height: calc(100vh - 6rem);
+            height: calc(100dvh - 6rem);
+            min-height: 0;
+            max-width: 100%;
+            overflow-x: hidden;
+        }
+        .st-key-preview-workspace > div[data-testid="stVerticalBlock"] {
+            height: 100%;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+        .st-key-preview-workspace [data-testid="stElementContainer"]:has(iframe[title="gps_layout_editor"]) {
+            flex: 1 0 460px;
+            min-height: 460px;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .st-key-preview-workspace [data-testid="stElementContainer"]:has(iframe[title="gps_layout_editor"]) > div {
+            flex: 1 1 auto;
+            min-height: 0;
+            min-width: 0;
+        }
         .preview-heading {
             font-size: 1.05rem;
             font-weight: 700;
@@ -635,6 +664,9 @@ def _inject_css(st) -> None:
         }
         iframe[title="gps_layout_editor"] {
             width: 100%;
+            height: 100% !important;
+            min-width: 0;
+            max-width: 100%;
             overflow: hidden;
         }
         div.stButton > button {
