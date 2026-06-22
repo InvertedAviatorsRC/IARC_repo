@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "property-lookup-tool"
+version = "0.1.0"
+description = "Local-first, provider-based real-estate property lookup"
+requires-python = ">=3.10"
+dependencies = [
+    "python-dotenv>=1.0,<2.0",
+    "requests>=2.31,<3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0,<9.0"]
+
+[project.scripts]
+property-lookup = "property_lookup.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
