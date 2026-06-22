@@ -1,29 +1,29 @@
 # Property Lookup Tool
 
-A local-first Python command-line program that looks up US real-estate property
-records and value estimates by address. Version 1 uses the legitimate RentCast API
-and keeps provider-specific code behind a small interface so a desktop app, web UI,
-batch workflow, or another licensed/public-records provider can be added later.
+A local-first Python command-line program for looking up real property records by
+address. Version 1 is designed to work **free, without an API key or paid
+subscription**, by querying official county/open-data services where available.
+
+The first working provider uses Scott County, Minnesota's public ArcGIS parcel
+layer. It returns real county fields such as parcel ID, property classification,
+year built, bedrooms, bathrooms, living area, lot area, county estimated market
+value, and last sale data when those fields exist.
+
+Public records are not the same as commercial market data. Free county data may
+not include a Zestimate-style valuation, current listing price, rent estimate, or
+annual tax bill. The CLI says `Not available` instead of inventing a value or
+failing the entire lookup. Data fields and update schedules vary by county.
 
 This project does **not** scrape Zillow pages. It does not use browser automation,
-private endpoints, proxies, or CAPTCHA bypasses. The `ZillowBridgeProvider` file is
-only a placeholder for a future authorized API integration.
+private endpoints, proxies, CAPTCHA bypasses, or restricted county pages. Providers
+use official public machine-readable sources or authorized APIs.
 
 ## Branch and project location
 
-The project lives in the IARC repository under `property-lookup-tool/` and is
-developed on:
+The project lives in the IARC repository under `property-lookup-tool/` on:
 
 ```text
 feature/property-lookup-tool
-```
-
-To create the branch manually from a current checkout:
-
-```bash
-git fetch origin main
-git switch -c feature/property-lookup-tool origin/main
-cd property-lookup-tool
 ```
 
 Do not make these changes directly on `main`.
@@ -39,70 +39,90 @@ python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
-The editable install makes the `src/` package available while you develop it.
+## Free Scott County lookup
 
-## Configure a real lookup
+Copy the default configuration:
 
-1. Create a RentCast account and API key from the
-   [RentCast API dashboard](https://app.rentcast.io/app/api).
-2. Copy the environment template:
+```bash
+cp .env.example .env
+```
 
-   ```bash
-   cp .env.example .env
-   ```
+The default `.env` setting needs no credential:
 
-3. Edit `.env` and add the key:
+```dotenv
+PROPERTY_PROVIDER=scott_county_mn
+RENTCAST_API_KEY=
+```
 
-   ```dotenv
-   PROPERTY_PROVIDER=rentcast
-   RENTCAST_API_KEY=your_key_here
-   ```
+Run the test-address lookup:
 
-`.env` is ignored by Git. Never commit a real key.
+```bash
+python -m property_lookup.cli "12649 Monterey Ave S, Savage, MN 55378"
+```
 
-Run a real lookup:
+`ScottCountyMNProvider` queries the official
+[Scott County parcel ArcGIS layer](https://gis.co.scott.mn.us/arcgis/rest/services/AGOL/SC_PARCELS_AGOL_WM/MapServer/0).
+It first requests records with the same numeric house number, then performs an
+exact normalized street and ZIP match locally. Only needed property fields are
+requested; taxpayer names and mailing addresses are not requested. The source name
+and public URLs are preserved in both the result and CLI output.
+
+This provider supports Scott County, Minnesota only. A lookup elsewhere will give
+a clear county/provider message. Future county providers can follow the same
+interface, but their fields will differ because local open-data programs vary.
+
+## Optional RentCast provider
+
+RentCast remains available for broader US coverage, but it is **not the default**
+and requires an active RentCast API subscription/key. To opt in, add a valid key:
+
+```dotenv
+PROPERTY_PROVIDER=rentcast
+RENTCAST_API_KEY=your_active_key_here
+```
+
+Then run:
 
 ```bash
 python -m property_lookup.cli "5500 Grand Lake Dr, San Antonio, TX 78244"
 ```
 
-RentCast is called once for the property record and once for the value estimate.
-The responses are merged into one `PropertyData` result. Missing fields display as
-`Not available`; they are never replaced with invented values. Provider responses
-are retained in `raw_data` for future export/report features, but raw data is not
-printed by the CLI.
-
-If the key is absent or rejected, the command exits with a clear error instead of
-pretending the lookup succeeded.
+If the key is missing or rejected, the CLI reports the problem honestly. `.env` is
+ignored by Git; never commit a real key.
 
 ## Explicit mock mode
 
-Use stable sample data to test the local flow without spending an API request:
+Use stable sample data to test the application flow without a network request:
 
 ```bash
 python -m property_lookup.cli "123 Main St, Philadelphia, PA" --mock
 ```
 
-Mock data is used only with `--mock` or `PROPERTY_PROVIDER=mock`.
+`--mock` always overrides `PROPERTY_PROVIDER`. Mock data is otherwise used only
+when `PROPERTY_PROVIDER=mock` is explicitly configured.
 
-## Provider design
+## Provider selection and design
+
+The current selector supports:
+
+- `PROPERTY_PROVIDER=scott_county_mn` — free Scott County public parcel data
+- `PROPERTY_PROVIDER=rentcast` — optional paid API integration
+- `PROPERTY_PROVIDER=mock` — explicit sample data
+- `PROPERTY_PROVIDER=zillow_bridge` — honest, unimplemented authorized-API placeholder
+- `PROPERTY_PROVIDER=public_records` — honest, unimplemented generic placeholder
 
 Every provider implements `PropertyProvider.lookup_property(address)` and returns a
 provider-neutral `PropertyData` object. Selection happens in
 `services/property_service.py`.
 
-To add a provider:
+To add another county or provider:
 
-1. Add a class under `src/property_lookup/providers/` that implements
-   `PropertyProvider`.
-2. Read its credentials in `config.py` and add only blank variables to
-   `.env.example`.
-3. Add it to `build_property_service()`.
-4. Map the provider response into `PropertyData`, keep the original response in
+1. Add a provider under `src/property_lookup/providers/`.
+2. Use an official open-data download, ArcGIS REST, CSV, GeoJSON, or an authorized
+   API, and review its terms.
+3. Add its configuration and selector entry.
+4. Map only real available fields into `PropertyData`, retain source metadata in
    `raw_data`, and add tests with stubbed HTTP responses.
-
-`ZillowBridgeProvider` and `PublicRecordsProvider` intentionally raise
-`NotImplementedError`. They are honest extension points, not fake providers.
 
 ## Tests
 
@@ -110,12 +130,15 @@ To add a provider:
 pytest
 ```
 
-Tests cover mock mode, service delegation, missing-key errors, CLI output, readable
-formatting, and RentCast response merging without making live network requests.
+Tests cover the Scott County record mapping and safe address matching, default
+provider selection, mock mode, service delegation, RentCast missing-key handling,
+CLI output, formatting, and RentCast response merging. Automated tests do not make
+live network requests.
 
 ## Future directions
 
-The service/model/provider split is ready to sit behind a simple desktop GUI or web
-UI. Natural next steps include CSV export, batch lookups, opt-in caching, formatted
-reports, and packaging with PyInstaller. Provider terms and data-retention rules
-should be reviewed before adding caching, exports, or redistribution.
+Natural next steps include additional free county providers, a downloadable
+Minnesota Geospatial Commons fallback, CSV and batch lookup, opt-in caching, pretty
+reports, a desktop/web UI, and PyInstaller packaging. Paid providers such as
+RentCast can remain optional for broader national coverage when a subscription is
+useful.

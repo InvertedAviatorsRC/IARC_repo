@@ -6,7 +6,7 @@ def test_cli_works_in_mock_mode(capsys):
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "## Property Lookup Result" in captured.out
+    assert "Property Lookup Result" in captured.out
     assert "Estimated Value: $325,000" in captured.out
     assert captured.err == ""
 

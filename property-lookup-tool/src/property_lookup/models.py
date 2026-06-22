@@ -11,6 +11,7 @@ class PropertyData:
 
     input_address: str
     normalized_address: str
+    parcel_id: str | None = None
     year_built: int | None = None
     list_price: float | None = None
     estimated_value: float | None = None
@@ -25,6 +26,7 @@ class PropertyData:
     tax_assessed_value: float | None = None
     annual_property_tax: float | None = None
     source: str = "Unknown"
+    source_urls: list[str] = field(default_factory=list)
     lookup_timestamp: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
