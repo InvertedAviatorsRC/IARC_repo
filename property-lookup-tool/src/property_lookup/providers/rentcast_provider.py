@@ -51,9 +51,11 @@ class RentCastProvider(PropertyProvider):
         return PropertyData(
             input_address=address,
             normalized_address=record.get("formattedAddress") or normalized_input,
+            state=record.get("state"),
+            county=record.get("county"),
             year_built=_number(record.get("yearBuilt"), int),
             list_price=_current_list_price(record.get("history")),
-            estimated_value=_number(value_payload.get("price")),
+            estimated_market_value=_number(value_payload.get("price")),
             beds=_number(record.get("bedrooms")),
             baths=_number(record.get("bathrooms")),
             square_feet=_number(record.get("squareFootage")),
@@ -68,11 +70,12 @@ class RentCastProvider(PropertyProvider):
                 property_tax, "total", "amount", "taxAmount"
             ),
             source="RentCast",
+            source_url="https://api.rentcast.io/v1",
             raw_data={
                 "property_record": record,
                 "value_estimate": value_payload,
             },
-        )
+        ).refresh_unavailable_fields()
 
     def _get(self, path: str, params: dict[str, Any]) -> Any:
         try:

@@ -12,14 +12,14 @@ class ConfigurationError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class Settings:
-    property_provider: str = "scott_county_mn"
+    property_provider: str = "minnesota_public"
     rentcast_api_key: str | None = None
 
     @classmethod
     def from_environment(cls) -> "Settings":
         load_dotenv()
         return cls(
-            property_provider=os.getenv("PROPERTY_PROVIDER", "scott_county_mn")
+            property_provider=os.getenv("PROPERTY_PROVIDER", "minnesota_public")
             .strip()
             .lower(),
             rentcast_api_key=os.getenv("RENTCAST_API_KEY") or None,

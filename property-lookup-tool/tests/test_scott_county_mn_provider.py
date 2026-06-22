@@ -28,8 +28,12 @@ class FakeResponse:
                         "AGLASqFt": 1078,
                         "GISAcres": 0.20638886,
                         "AssessmentYear": 2025,
+                        "EMVLand": 120700,
+                        "EMVImprove": 169400,
                         "EMVTotal": 290100,
                         "NextAssessmentYear": 2026,
+                        "NextEMVLand": 120700,
+                        "NextEMVImprove": 169300,
                         "NextEMVTotal": 290000,
                         "LastSaleDate": "09/10/2012",
                         "LastSalePrice": 123750,
@@ -63,11 +67,13 @@ def test_scott_county_provider_maps_real_public_fields():
     assert result.baths == 1
     assert result.square_feet == 1078
     assert round(result.lot_size) == 8990
+    assert result.assessed_land_value == 120700
+    assert result.assessed_building_value == 169300
     assert result.tax_assessed_value == 290000
-    assert result.estimated_value is None
+    assert result.estimated_market_value is None
     assert result.list_price is None
     assert result.annual_property_tax is None
-    assert result.source_urls
+    assert result.source_url
     assert session.call[1]["params"]["where"] == "PropertyHouseNo=12649"
     assert "TaxPayerName" not in session.call[1]["params"]["outFields"]
 

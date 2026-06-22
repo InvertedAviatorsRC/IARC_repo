@@ -6,7 +6,7 @@ from property_lookup.providers.base import PropertyProvider
 from property_lookup.providers.mock_provider import MockProvider
 from property_lookup.providers.public_records_provider import PublicRecordsProvider
 from property_lookup.providers.rentcast_provider import RentCastProvider
-from property_lookup.providers.scott_county_mn_provider import ScottCountyMNProvider
+from property_lookup.providers.mn import MinnesotaPublicProvider
 from property_lookup.providers.zillow_bridge_provider import ZillowBridgeProvider
 
 
@@ -23,8 +23,8 @@ def build_property_service(settings: Settings, force_mock: bool = False) -> Prop
 
     if provider_name == "mock":
         provider: PropertyProvider = MockProvider()
-    elif provider_name == "scott_county_mn":
-        provider = ScottCountyMNProvider()
+    elif provider_name == "minnesota_public":
+        provider = MinnesotaPublicProvider()
     elif provider_name == "rentcast":
         if not settings.rentcast_api_key:
             raise ConfigurationError(
@@ -39,7 +39,7 @@ def build_property_service(settings: Settings, force_mock: bool = False) -> Prop
     else:
         raise ConfigurationError(
             f"Unknown PROPERTY_PROVIDER '{provider_name}'. Supported values: "
-            "scott_county_mn, rentcast, mock, zillow_bridge, public_records."
+            "minnesota_public, rentcast, mock, zillow_bridge, public_records."
         )
 
     return PropertyService(provider)

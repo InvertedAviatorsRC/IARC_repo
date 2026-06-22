@@ -6,7 +6,12 @@ from property_lookup.models import PropertyData
 
 
 def format_property_summary(data: PropertyData) -> str:
-    last_sold = "Not available"
+    free_public_source = data.state == "MN" and "public" in data.source.lower()
+    unavailable = (
+        "Not available from free public source" if free_public_source else "Not available"
+    )
+
+    last_sold = unavailable
     if data.last_sold_price is not None and data.last_sold_date:
         last_sold = f"{_money(data.last_sold_price)} on {data.last_sold_date}"
     elif data.last_sold_price is not None:
@@ -14,65 +19,62 @@ def format_property_summary(data: PropertyData) -> str:
     elif data.last_sold_date:
         last_sold = data.last_sold_date
 
-    free_public_source = data.source == "Scott County MN public parcel data"
-    market_unavailable = (
-        "Not available from free public source"
-        if free_public_source
-        else "Not available"
-    )
-
     lines = [
         "Property Lookup Result",
         "----------------------",
         f"Input Address: {data.input_address}",
         f"Normalized Address: {data.normalized_address}",
-        f"Parcel ID: {_text(data.parcel_id)}",
-        f"Property Type: {_text(data.property_type)}",
-        f"Year Built: {_year(data.year_built)}",
-        f"Beds: {_number(data.beds)}",
-        f"Baths: {_number(data.baths)}",
-        f"Square Feet: {_number(data.square_feet)}",
-        f"Lot Size: {_area(data.lot_size)}",
-        f"Estimated Value: {_money(data.estimated_value, market_unavailable)}",
-        f"Rent Estimate: {_rent(data.rent_estimate)}",
-        f"List Price: {_money(data.list_price, market_unavailable)}",
+        f"State: {_text(data.state, unavailable)}",
+        f"County: {_text(data.county, unavailable)}",
+        f"Parcel ID: {_text(data.parcel_id, unavailable)}",
+        f"Property Type: {_text(data.property_type, unavailable)}",
+        f"Year Built: {_year(data.year_built, unavailable)}",
+        f"Beds: {_number(data.beds, unavailable)}",
+        f"Baths: {_number(data.baths, unavailable)}",
+        f"Square Feet: {_number(data.square_feet, unavailable)}",
+        f"Lot Size: {_area(data.lot_size, unavailable)}",
+        f"Assessed Land Value: {_money(data.assessed_land_value, unavailable)}",
+        f"Assessed Building Value: {_money(data.assessed_building_value, unavailable)}",
+        f"Tax Assessed Value: {_money(data.tax_assessed_value, unavailable)}",
+        f"Annual Property Tax: {_money(data.annual_property_tax, unavailable)}",
+        f"Estimated Market Value: {_money(data.estimated_market_value, unavailable)}",
+        f"List Price: {_money(data.list_price, unavailable)}",
         f"Last Sold: {last_sold}",
-        f"Tax Assessed Value: {_money(data.tax_assessed_value)}",
-        f"Annual Property Tax: {_money(data.annual_property_tax)}",
         f"Source: {data.source}",
+        f"Source URL: {_text(data.source_url, unavailable)}",
         f"Lookup Time: {_timestamp(data.lookup_timestamp)}",
     ]
-    for index, url in enumerate(data.source_urls, start=1):
-        label = "Source URL" if index == 1 else f"Source URL {index}"
-        lines.append(f"{label}: {url}")
+    coverage_message = data.raw_data.get("coverage_message")
+    if coverage_message:
+        lines.append(f"Coverage Note: {coverage_message}")
+    if data.unavailable_fields:
+        lines.append(f"Unavailable Fields: {', '.join(data.unavailable_fields)}")
     return "\n".join(lines)
 
 
-def _text(value: object | None) -> str:
-    return str(value) if value not in (None, "") else "Not available"
+def _text(value: object | None, unavailable: str = "Not available") -> str:
+    return str(value) if value not in (None, "") else unavailable
 
 
-def _number(value: float | int | None) -> str:
+def _number(
+    value: float | int | None, unavailable: str = "Not available"
+) -> str:
     if value is None:
-        return "Not available"
+        return unavailable
     number = float(value)
     return f"{number:,.0f}" if number.is_integer() else f"{number:,.1f}"
 
 
-def _year(value: int | None) -> str:
-    return str(value) if value is not None else "Not available"
+def _year(value: int | None, unavailable: str = "Not available") -> str:
+    return str(value) if value is not None else unavailable
 
 
 def _money(value: float | int | None, unavailable: str = "Not available") -> str:
     return f"${float(value):,.0f}" if value is not None else unavailable
 
 
-def _rent(value: float | int | None) -> str:
-    return f"{_money(value)}/month" if value is not None else "Not available"
-
-
-def _area(value: float | int | None) -> str:
-    return f"{_number(value)} sqft" if value is not None else "Not available"
+def _area(value: float | int | None, unavailable: str = "Not available") -> str:
+    return f"{_number(value)} sqft" if value is not None else unavailable
 
 
 def _timestamp(value: datetime) -> str:

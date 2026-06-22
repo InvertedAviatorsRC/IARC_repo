@@ -48,7 +48,7 @@ def test_rentcast_provider_combines_records_and_valuation():
         "5500 Grand Lake Dr, San Antonio, TX 78244"
     )
 
-    assert result.estimated_value == 300000
+    assert result.estimated_market_value == 300000
     assert result.tax_assessed_value == 245000
     assert result.annual_property_tax == 4700
     assert result.last_sold_date == "2024-11-18"

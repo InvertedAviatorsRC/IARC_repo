@@ -1,36 +1,25 @@
 # Property Lookup Tool
 
-A local-first Python command-line program for looking up real property records by
-address. Version 1 is designed to work **free, without an API key or paid
-subscription**, by querying official county/open-data services where available.
+A local-first Python command-line program for looking up Minnesota residential
+property records by address. The default path is **free and requires no API key or
+paid subscription**.
 
-The first working provider uses Scott County, Minnesota's public ArcGIS parcel
-layer. It returns real county fields such as parcel ID, property classification,
-year built, bedrooms, bathrooms, living area, lot area, county estimated market
-value, and last sale data when those fields exist.
+Version 1 uses an official public-data pipeline:
 
-Public records are not the same as commercial market data. Free county data may
-not include a Zestimate-style valuation, current listing price, rent estimate, or
-annual tax bill. The CLI says `Not available` instead of inventing a value or
-failing the entire lookup. Data fields and update schedules vary by county.
+1. Normalize the address.
+2. Match it with the free U.S. Census geocoder and identify its Minnesota county.
+3. Query Minnesota Geospatial Commons' statewide opt-in parcel FeatureServer.
+4. Try MetroGIS regional parcels when applicable and needed.
+5. Enrich the result with a county-specific provider when one is implemented.
+6. Return every real field found and mark the rest unavailable.
 
-This project does **not** scrape Zillow pages. It does not use browser automation,
-private endpoints, proxies, CAPTCHA bypasses, or restricted county pages. Providers
-use official public machine-readable sources or authorized APIs.
-
-## Branch and project location
-
-The project lives in the IARC repository under `property-lookup-tool/` on:
-
-```text
-feature/property-lookup-tool
-```
-
-Do not make these changes directly on `main`.
+The project does **not** scrape Zillow, automate browsers, bypass anti-bot systems,
+or use hidden/restricted endpoints. Providers use official public machine-readable
+services or authorized APIs.
 
 ## Install
 
-Python 3.10 or newer is required. From this directory:
+Python 3.10 or newer is required. From `property-lookup-tool/`:
 
 ```bash
 python -m venv .venv
@@ -39,90 +28,94 @@ python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
-## Free Scott County lookup
+## Free Minnesota lookup
 
-Copy the default configuration:
+Copy the environment template:
 
 ```bash
 cp .env.example .env
 ```
 
-The default `.env` setting needs no credential:
+The default configuration needs no credential:
 
 ```dotenv
-PROPERTY_PROVIDER=scott_county_mn
+PROPERTY_PROVIDER=minnesota_public
 RENTCAST_API_KEY=
 ```
 
-Run the test-address lookup:
+Run a lookup:
 
 ```bash
 python -m property_lookup.cli "12649 Monterey Ave S, Savage, MN 55378"
 ```
 
-`ScottCountyMNProvider` queries the official
-[Scott County parcel ArcGIS layer](https://gis.co.scott.mn.us/arcgis/rest/services/AGOL/SC_PARCELS_AGOL_WM/MapServer/0).
-It first requests records with the same numeric house number, then performs an
-exact normalized street and ZIP match locally. Only needed property fields are
-requested; taxpayer names and mailing addresses are not requested. The source name
-and public URLs are preserved in both the result and CLI output.
+The default provider uses these public sources:
 
-This provider supports Scott County, Minnesota only. A lookup elsewhere will give
-a clear county/provider message. Future county providers can follow the same
-interface, but their fields will differ because local open-data programs vary.
+- [U.S. Census Geocoder](https://geocoding.geo.census.gov/geocoder/) for address,
+  coordinates, state, and county identification.
+- [Minnesota Geospatial Commons statewide opt-in parcels](https://gis.data.mn.gov/maps/69148d3959194a05a23964cc60f6517b/about)
+  for standardized parcel and tax fields where a county participates.
+- [MetroGIS regional parcels](https://arcgis.metc.state.mn.us/data1/rest/services/parcels/Parcels/FeatureServer)
+  as a seven-county Twin Cities fallback.
+- Official county ArcGIS/open-data services for local enrichment. Scott County is
+  the first implemented county adapter.
 
-## Optional RentCast provider
+Public coverage varies by county and by field. A county may omit building details,
+tax totals, or sale history, and not every Minnesota county currently participates
+in the statewide compilation. When a parcel or county adapter is unavailable, the
+program returns the verified address/county and any broad-source fields it found,
+plus a coverage note. It does not crash simply because local data is limited.
 
-RentCast remains available for broader US coverage, but it is **not the default**
-and requires an active RentCast API subscription/key. To opt in, add a valid key:
+Free public records usually do not include a Zestimate-style automated valuation,
+current listing price, or rent estimate. Those fields display as
+`Not available from free public source`; the program never invents them.
+
+## Provider architecture
+
+The Minnesota router lives under `src/property_lookup/providers/mn/`:
+
+```text
+mn/
+  minnesota_public_provider.py      # geocoder and routing pipeline
+  mn_geospatial_commons_provider.py # statewide opt-in parcels
+  metrogis_provider.py              # seven-county regional fallback
+  county_provider_registry.py       # implemented county adapters
+  county_providers/
+    scott_county_provider.py        # working county enrichment
+    hennepin_county_provider.py     # explicit future placeholders
+    ramsey_county_provider.py
+    dakota_county_provider.py
+    washington_county_provider.py
+    anoka_county_provider.py
+    carver_county_provider.py
+```
+
+Each new county provider can be implemented independently and then registered in
+`county_provider_registry.py`. Placeholder classes raise `NotImplementedError`;
+they do not pretend to return real data.
+
+## Optional paid nationwide provider
+
+RentCast remains available for broader national coverage, but it is **not the
+default** and requires an active paid API subscription/key:
 
 ```dotenv
 PROPERTY_PROVIDER=rentcast
 RENTCAST_API_KEY=your_active_key_here
 ```
 
-Then run:
-
-```bash
-python -m property_lookup.cli "5500 Grand Lake Dr, San Antonio, TX 78244"
-```
-
-If the key is missing or rejected, the CLI reports the problem honestly. `.env` is
-ignored by Git; never commit a real key.
+`.env` is ignored by Git. Never commit a real key. If the key is missing or
+rejected, the CLI reports the problem honestly.
 
 ## Explicit mock mode
 
-Use stable sample data to test the application flow without a network request:
+Use stable sample data without making any network request:
 
 ```bash
 python -m property_lookup.cli "123 Main St, Philadelphia, PA" --mock
 ```
 
-`--mock` always overrides `PROPERTY_PROVIDER`. Mock data is otherwise used only
-when `PROPERTY_PROVIDER=mock` is explicitly configured.
-
-## Provider selection and design
-
-The current selector supports:
-
-- `PROPERTY_PROVIDER=scott_county_mn` — free Scott County public parcel data
-- `PROPERTY_PROVIDER=rentcast` — optional paid API integration
-- `PROPERTY_PROVIDER=mock` — explicit sample data
-- `PROPERTY_PROVIDER=zillow_bridge` — honest, unimplemented authorized-API placeholder
-- `PROPERTY_PROVIDER=public_records` — honest, unimplemented generic placeholder
-
-Every provider implements `PropertyProvider.lookup_property(address)` and returns a
-provider-neutral `PropertyData` object. Selection happens in
-`services/property_service.py`.
-
-To add another county or provider:
-
-1. Add a provider under `src/property_lookup/providers/`.
-2. Use an official open-data download, ArcGIS REST, CSV, GeoJSON, or an authorized
-   API, and review its terms.
-3. Add its configuration and selector entry.
-4. Map only real available fields into `PropertyData`, retain source metadata in
-   `raw_data`, and add tests with stubbed HTTP responses.
+`--mock` always overrides `PROPERTY_PROVIDER`.
 
 ## Tests
 
@@ -130,15 +123,14 @@ To add another county or provider:
 pytest
 ```
 
-Tests cover the Scott County record mapping and safe address matching, default
-provider selection, mock mode, service delegation, RentCast missing-key handling,
-CLI output, formatting, and RentCast response merging. Automated tests do not make
-live network requests.
+Tests cover Minnesota county routing, statewide parcel mapping, Scott County
+enrichment, unsupported-county partial results, unavailable-field output, mock
+mode, the CLI, and optional RentCast behavior. Automated tests stub HTTP responses
+and do not depend on live public services.
 
 ## Future directions
 
-Natural next steps include additional free county providers, a downloadable
-Minnesota Geospatial Commons fallback, CSV and batch lookup, opt-in caching, pretty
-reports, a desktop/web UI, and PyInstaller packaging. Paid providers such as
-RentCast can remain optional for broader national coverage when a subscription is
-useful.
+Natural next steps are implementing the placeholder metro county adapters, adding
+adapters for non-metro counties, supporting a locally downloaded MnGeo GeoPackage
+for offline/batch use, CSV export, caching, reports, a desktop/web UI, and packaged
+executables.

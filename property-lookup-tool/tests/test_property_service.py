@@ -3,8 +3,8 @@ import pytest
 from property_lookup.config import ConfigurationError, Settings
 from property_lookup.models import PropertyData
 from property_lookup.providers.base import PropertyProvider
+from property_lookup.providers.mn import MinnesotaPublicProvider
 from property_lookup.services.property_service import PropertyService, build_property_service
-from property_lookup.providers.scott_county_mn_provider import ScottCountyMNProvider
 
 
 class RecordingProvider(PropertyProvider):
@@ -29,7 +29,7 @@ def test_missing_rentcast_api_key_has_clear_error():
         build_property_service(Settings(property_provider="rentcast"))
 
 
-def test_scott_county_is_the_default_free_provider():
+def test_minnesota_public_is_the_default_free_provider():
     service = build_property_service(Settings())
 
-    assert isinstance(service.provider, ScottCountyMNProvider)
+    assert isinstance(service.provider, MinnesotaPublicProvider)

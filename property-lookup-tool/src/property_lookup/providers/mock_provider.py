@@ -13,8 +13,10 @@ class MockProvider(PropertyProvider):
         return PropertyData(
             input_address=address,
             normalized_address=normalized,
+            state="PA",
+            county="Philadelphia County",
             year_built=1952,
-            estimated_value=325_000,
+            estimated_market_value=325_000,
             rent_estimate=2_150,
             beds=3,
             baths=2,
@@ -26,5 +28,6 @@ class MockProvider(PropertyProvider):
             tax_assessed_value=240_000,
             annual_property_tax=4_200,
             source="Mock (sample data)",
+            source_url="mock://sample-property",
             raw_data={"mock": True},
-        )
+        ).refresh_unavailable_fields()
