@@ -18,6 +18,7 @@ def layout_editor(
     canvas_height: int,
     elements: list[dict[str, Any]],
     selected: str = "map",
+    editor_height: int = 720,
     key: str | None = None,
 ) -> dict | None:
     return _component(
@@ -26,6 +27,7 @@ def layout_editor(
         canvas_height=int(canvas_height),
         elements=elements,
         selected=selected,
+        editor_height=int(editor_height),
         key=key,
         default=None,
     )
