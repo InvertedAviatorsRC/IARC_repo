@@ -22,7 +22,6 @@ from gps_telemetry_visualizer.core import (
     default_output_name,
     default_overlay_layout,
     detect_columns,
-    layout_warnings,
     prepare_telemetry,
     render_animation,
     render_static_preview,
@@ -36,6 +35,8 @@ from gps_telemetry_visualizer.presets import (
     save_layout_preset,
 )
 
+
+PREVIEW_EDITOR_HEIGHT = 760
 
 RESOLUTION_PRESETS = {
     "3840 × 2160 — 4K UHD": (3840, 2160),
@@ -65,121 +66,125 @@ def run_app() -> None:
     st.title("GPS Telemetry Visualizer")
     create_clicked = False
 
-    upload_col, controls_col, preview_col = st.columns([0.76, 0.9, 2.45], gap="medium")
-
-    with upload_col:
-        st.subheader("CSV")
-        uploaded_file = st.file_uploader("Drag and drop CSV file", type=["csv"], label_visibility="visible")
-
-        if uploaded_file is not None:
-            st.caption("{} uploaded".format(uploaded_file.name))
-            columns = _read_columns(uploaded_file)
-            detected = detect_columns(columns)
-        else:
-            columns = []
-            detected = {"gps": "GPS", "speed": "GSpd(kmh)", "heading": "Hdg(°)", "altitude": "Alt(m)"}
-
-        st.divider()
-        st.subheader("Output")
-        if "output_dir" not in st.session_state:
-            st.session_state.output_dir = str(Path.cwd() / "output")
-        if "pending_output_dir" in st.session_state:
-            st.session_state.output_dir = st.session_state.pop("pending_output_dir")
-
-        folder_col, browse_col = st.columns([1, 0.38], vertical_alignment="bottom")
-        with folder_col:
-            output_dir = st.text_input("Output folder", key="output_dir")
-        with browse_col:
-            if st.button("Browse", use_container_width=True):
-                selected_folder = _choose_output_folder(st.session_state.output_dir)
-                if selected_folder:
-                    st.session_state.pending_output_dir = selected_folder
-                    st.rerun()
-                else:
-                    st.warning("No folder selected.")
-
-        output_type = st.radio("File type", ["mp4", "mov"], horizontal=True, index=0)
-        output_width, output_height = _resolution_controls(st)
+    controls_col, preview_col = st.columns([1.12, 2.88], gap="medium")
 
     with controls_col:
-        st.subheader("Settings")
-        export_mode = st.radio("Output", ["both", "map", "speedometer"], horizontal=True, index=0)
-        if "speedometer_style" not in st.session_state:
-            st.session_state.speedometer_style = "half"
-        speedometer_style = st.selectbox(
-            "Speedometer style",
-            ["half", "corner"],
-            format_func=lambda value: "180° half gauge" if value == "half" else "90° corner gauge",
-            key="speedometer_style",
-        )
-        _ensure_layout_state(st, output_width, output_height, export_mode, speedometer_style)
+        with st.container(key="controls-panel", border=False):
+            st.subheader("CSV")
+            uploaded_file = st.file_uploader("Drag and drop CSV file", type=["csv"], label_visibility="visible")
 
-        gps_col = _column_select(st, "GPS column", columns, detected.get("gps") or "GPS")
-        speed_col = _column_select(st, "Speed column", columns, detected.get("speed") or "GSpd(kmh)")
-        heading_col = _column_select(st, "Heading column", columns, detected.get("heading") or "Hdg(°)")
-        altitude_col = _column_select(st, "Altitude column", columns, detected.get("altitude") or "Alt(m)")
+            if uploaded_file is not None:
+                st.caption("{} uploaded".format(uploaded_file.name))
+                columns = _read_columns(uploaded_file)
+                detected = detect_columns(columns)
+            else:
+                columns = []
+                detected = {"gps": "GPS", "speed": "GSpd(kmh)", "heading": "Hdg(°)", "altitude": "Alt(m)"}
 
-        unit_col_1, unit_col_2 = st.columns(2)
-        with unit_col_1:
-            speed_input_unit = st.selectbox("Input speed unit", ["kmh", "mph", "ms"], index=0)
-        with unit_col_2:
-            speed_output_unit = st.selectbox("Output speed unit", ["mph", "kmh", "ms"], index=0)
+            st.divider()
+            st.subheader("Output")
+            if "output_dir" not in st.session_state:
+                st.session_state.output_dir = str(Path.cwd() / "output")
+            if "pending_output_dir" in st.session_state:
+                st.session_state.output_dir = st.session_state.pop("pending_output_dir")
 
-        fps_col, seconds_col = st.columns(2)
-        with fps_col:
-            fps = st.slider("FPS", min_value=10, max_value=60, value=30, step=5)
-        with seconds_col:
-            seconds_between = st.slider("Seconds between GPS points", min_value=0.2, max_value=3.0, value=1.0, step=0.1)
+            folder_col, browse_col = st.columns([1, 0.38], vertical_alignment="bottom")
+            with folder_col:
+                output_dir = st.text_input("Output folder", key="output_dir")
+            with browse_col:
+                if st.button("Browse", use_container_width=True):
+                    selected_folder = _choose_output_folder(st.session_state.output_dir)
+                    if selected_folder:
+                        st.session_state.pending_output_dir = selected_folder
+                        st.rerun()
+                    else:
+                        st.warning("No folder selected.")
 
-        auto_max_speed = st.checkbox("Auto max speed", value=True)
-        max_speed = None if auto_max_speed else st.number_input("Max speed", min_value=1.0, value=60.0, step=5.0)
+            output_type = st.radio("File type", ["mp4", "mov"], horizontal=True, index=0)
+            output_width, output_height = _resolution_controls(st)
 
-        color_row_1, color_row_2 = st.columns(2)
-        with color_row_1:
-            path_color = st.color_picker("Path", "#00d5ff")
-            speedometer_color = st.color_picker("Speedometer", "#00d5ff")
-            start_marker_color = st.color_picker("Start star", "#ffd43b")
-        with color_row_2:
-            dot_color = st.color_picker("Position dot", "#ff3355")
-            needle_color = st.color_picker("Needle", "#ff3355")
+            st.divider()
+            st.subheader("Settings")
+            export_mode = st.radio("Output", ["both", "map", "speedometer"], horizontal=True, index=0)
+            if "speedometer_style" not in st.session_state:
+                st.session_state.speedometer_style = "half"
+            speedometer_style = st.selectbox(
+                "Speedometer style",
+                ["half", "corner"],
+                format_func=lambda value: "180° half gauge" if value == "half" else "90° corner gauge",
+                key="speedometer_style",
+            )
+            _ensure_layout_state(st, output_width, output_height, export_mode, speedometer_style)
 
-        transparent = st.checkbox(
-            "Transparent background",
-            value=(output_type == "mov"),
-            disabled=(output_type == "mp4"),
-            help="Transparent backgrounds are only available for MOV exports.",
-        )
-        transparent = transparent and output_type == "mov"
-        background_color = "#101820"
-        if not transparent:
-            background_color = st.color_picker("Background", background_color)
+            gps_col = _column_select(st, "GPS column", columns, detected.get("gps") or "GPS")
+            speed_col = _column_select(st, "Speed column", columns, detected.get("speed") or "GSpd(kmh)")
+            heading_col = _column_select(st, "Heading column", columns, detected.get("heading") or "Hdg(°)")
+            altitude_col = _column_select(st, "Altitude column", columns, detected.get("altitude") or "Alt(m)")
 
-        output_name = st.text_input("Output file name", value=default_output_name(export_mode, output_type))
-        _preset_controls(st, output_width, output_height, export_mode, speedometer_style)
+            unit_col_1, unit_col_2 = st.columns(2)
+            with unit_col_1:
+                speed_input_unit = st.selectbox("Input speed unit", ["kmh", "mph", "ms"], index=0)
+            with unit_col_2:
+                speed_output_unit = st.selectbox("Output speed unit", ["mph", "kmh", "ms"], index=0)
 
-        base_config = RenderConfig(
-            export_mode=export_mode,
-            fps=fps,
-            seconds_between_gps_points=seconds_between,
-            gps_col=gps_col,
-            speed_col=speed_col,
-            heading_col=heading_col,
-            altitude_col=altitude_col,
-            speed_input_unit=speed_input_unit,
-            speed_output_unit=speed_output_unit,
-            max_speed=max_speed,
-            path_color=path_color,
-            dot_color=dot_color,
-            start_marker_color=start_marker_color,
-            speedometer_color=speedometer_color,
-            needle_color=needle_color,
-            speedometer_style=speedometer_style,
-            background_color=background_color,
-            transparent=transparent,
-            output_width=output_width,
-            output_height=output_height,
-            layout=clone_overlay_layout(st.session_state.overlay_layout),
-        )
+            fps_col, seconds_col = st.columns(2)
+            with fps_col:
+                fps = st.slider("FPS", min_value=10, max_value=60, value=30, step=5)
+            with seconds_col:
+                seconds_between = st.slider("Seconds between GPS points", min_value=0.2, max_value=3.0, value=1.0, step=0.1)
+
+            auto_max_speed = st.checkbox("Auto max speed", value=True)
+            max_speed = None if auto_max_speed else st.number_input("Max speed", min_value=1.0, value=60.0, step=5.0)
+
+            st.markdown("#### Colors")
+            color_row_1, color_row_2 = st.columns(2)
+            with color_row_1:
+                path_color = st.color_picker("Path", "#00d5ff")
+                speedometer_color = st.color_picker("Speedometer", "#00d5ff")
+                start_marker_color = st.color_picker("Start star", "#ffd43b")
+            with color_row_2:
+                dot_color = st.color_picker("Position dot", "#ff3355")
+                needle_color = st.color_picker("Needle", "#ff3355")
+
+            transparent = st.checkbox(
+                "Transparent background",
+                value=(output_type == "mov"),
+                disabled=(output_type == "mp4"),
+                help="Transparent backgrounds are only available for MOV exports.",
+            )
+            transparent = transparent and output_type == "mov"
+            background_color = "#101820"
+            if not transparent:
+                background_color = st.color_picker("Background", background_color)
+
+            output_name = st.text_input("Output file name", value=default_output_name(export_mode, output_type))
+
+            base_config = RenderConfig(
+                export_mode=export_mode,
+                fps=fps,
+                seconds_between_gps_points=seconds_between,
+                gps_col=gps_col,
+                speed_col=speed_col,
+                heading_col=heading_col,
+                altitude_col=altitude_col,
+                speed_input_unit=speed_input_unit,
+                speed_output_unit=speed_output_unit,
+                max_speed=max_speed,
+                path_color=path_color,
+                dot_color=dot_color,
+                start_marker_color=start_marker_color,
+                speedometer_color=speedometer_color,
+                needle_color=needle_color,
+                speedometer_style=speedometer_style,
+                background_color=background_color,
+                transparent=transparent,
+                output_width=output_width,
+                output_height=output_height,
+                layout=clone_overlay_layout(st.session_state.overlay_layout),
+            )
+
+            _preset_controls(st, output_width, output_height, export_mode, speedometer_style)
+            _layout_numeric_controls(st, output_width, output_height, export_mode, speedometer_style)
 
     config = base_config
 
@@ -191,8 +196,6 @@ def run_app() -> None:
             if uploaded_file is None:
                 preview_slot.info("Upload a CSV to preview the map and speedometer.")
                 create_clicked = st.button("Create", type="primary", use_container_width=True, disabled=True)
-                _show_layout_warnings(st, base_config)
-                _layout_numeric_controls(st, output_width, output_height, export_mode, speedometer_style)
             else:
                 try:
                     preview_source = _uploaded_bytes(uploaded_file)
@@ -218,6 +221,7 @@ def run_app() -> None:
                             output_height,
                             _component_elements(config),
                             selected=st.session_state.get("selected_layout_element", "map"),
+                            editor_height=PREVIEW_EDITOR_HEIGHT,
                             key="layout_editor",
                         )
                     if _apply_drag_result(st, drag_result):
@@ -234,12 +238,9 @@ def run_app() -> None:
                             config.speed_output_unit.upper(),
                         )
                     )
-                    _show_layout_warnings(st, config)
-                    _layout_numeric_controls(st, output_width, output_height, export_mode, speedometer_style)
                 except Exception as exc:
                     preview_slot.error(str(exc))
                     create_clicked = st.button("Create", type="primary", use_container_width=True, disabled=True)
-                    _layout_numeric_controls(st, output_width, output_height, export_mode, speedometer_style)
 
     if create_clicked:
         if uploaded_file is None:
@@ -369,7 +370,8 @@ def _preset_controls(st, width: int, height: int, export_mode: str, speedometer_
 
 
 def _layout_numeric_controls(st, width: int, height: int, export_mode: str, speedometer_style: str) -> None:
-    st.markdown("#### Elements")
+    st.divider()
+    st.subheader("Elements")
     defaults = default_overlay_layout(width, height, export_mode, speedometer_style)
     labels = {
         "map": "Map",
@@ -381,19 +383,26 @@ def _layout_numeric_controls(st, width: int, height: int, export_mode: str, spee
         element = getattr(st.session_state.overlay_layout, name)
         default_element = getattr(defaults, name)
         with st.expander(label, expanded=name == st.session_state.get("selected_layout_element", "map")):
-            visible = st.checkbox("Show {}".format(label.lower()), value=element.visible)
+            visible = st.checkbox("Show {}".format(label.lower()), value=element.visible, key="show_{}".format(name))
             x_col, y_col = st.columns(2)
             with x_col:
-                x_value = st.number_input("{} X".format(label), value=float(element.x), step=1.0)
+                x_value = st.number_input("{} X".format(label), value=float(element.x), step=1.0, key="{}_x".format(name))
             with y_col:
-                y_value = st.number_input("{} Y".format(label), value=float(element.y), step=1.0)
+                y_value = st.number_input("{} Y".format(label), value=float(element.y), step=1.0, key="{}_y".format(name))
+            scale_value = st.number_input(
+                "{} Scale %".format(label),
+                min_value=10,
+                value=int(round(float(element.scale) * 100)),
+                step=5,
+                key="{}_scale".format(name),
+            )
             reset_col, select_col = st.columns(2)
             with reset_col:
                 if st.button("Reset {}".format(label), key="reset_{}".format(name), use_container_width=True):
                     setattr(
                         st.session_state.overlay_layout,
                         name,
-                        ElementLayout(default_element.x, default_element.y, default_element.visible),
+                        ElementLayout(default_element.x, default_element.y, default_element.visible, default_element.scale),
                     )
                     st.rerun()
             with select_col:
@@ -401,8 +410,14 @@ def _layout_numeric_controls(st, width: int, height: int, export_mode: str, spee
                     st.session_state.selected_layout_element = name
                     st.rerun()
 
-            if (element.x, element.y, element.visible) != (x_value, y_value, visible):
-                setattr(st.session_state.overlay_layout, name, ElementLayout(float(x_value), float(y_value), bool(visible)))
+            scale = max(0.1, float(scale_value) / 100.0)
+            if (
+                abs(element.x - x_value) >= 0.01
+                or abs(element.y - y_value) >= 0.01
+                or bool(element.visible) != bool(visible)
+                or abs(float(element.scale) - scale) >= 0.001
+            ):
+                setattr(st.session_state.overlay_layout, name, ElementLayout(float(x_value), float(y_value), bool(visible), scale))
                 st.rerun()
 
 
@@ -446,15 +461,9 @@ def _apply_drag_result(st, result: Optional[dict]) -> bool:
     if abs(element.x - x_value) < 0.5 and abs(element.y - y_value) < 0.5:
         st.session_state.selected_layout_element = name
         return False
-    setattr(st.session_state.overlay_layout, name, ElementLayout(x_value, y_value, element.visible))
+    setattr(st.session_state.overlay_layout, name, ElementLayout(x_value, y_value, element.visible, element.scale))
     st.session_state.selected_layout_element = name
     return True
-
-
-def _show_layout_warnings(st, config: RenderConfig) -> None:
-    warnings = layout_warnings(config.layout, CanvasConfig(config.output_width, config.output_height), config)
-    for warning in warnings:
-        st.warning(warning)
 
 
 def _preset_label_for_size(width: int, height: int) -> str:
@@ -614,9 +623,9 @@ def _inject_css(st) -> None:
         """
         <style>
         .block-container {
-            padding-top: 0.8rem;
-            padding-bottom: 1.2rem;
-            max-width: min(1880px, 98vw);
+            padding-top: 0.65rem;
+            padding-bottom: 0.8rem;
+            max-width: min(1980px, 99vw);
             overflow-x: hidden;
         }
         [data-testid="stHorizontalBlock"],
@@ -628,9 +637,29 @@ def _inject_css(st) -> None:
         [data-testid="column"] {
             overflow-x: hidden;
         }
+        .st-key-controls-panel {
+            height: calc(100vh - 5.3rem);
+            height: calc(100dvh - 5.3rem);
+            min-height: 0;
+            max-width: 100%;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding-right: 0.45rem;
+        }
+        .st-key-controls-panel > div[data-testid="stVerticalBlock"] {
+            min-width: 0;
+            max-width: 100%;
+            overflow-x: hidden;
+        }
+        .st-key-controls-panel [data-testid="stFileUploaderDropzone"] {
+            min-height: 150px;
+            border-radius: 8px;
+            border: 1px dashed rgba(80, 130, 180, 0.8);
+            background: rgba(18, 31, 43, 0.04);
+        }
         .st-key-preview-workspace {
-            height: calc(100vh - 6rem);
-            height: calc(100dvh - 4.5rem);
+            height: calc(100vh - 5.3rem);
+            height: calc(100dvh - 5.3rem);
             min-height: 0;
             max-width: 100%;
             overflow-x: hidden;
@@ -642,43 +671,36 @@ def _inject_css(st) -> None:
             flex-direction: column;
             overflow-x: hidden;
             overflow-y: auto;
+            gap: 0.35rem;
         }
         .st-key-preview-workspace [data-testid="stElementContainer"]:has(iframe[title="gps_layout_editor"]) {
-            flex: 1 1 auto;
-            min-height: 620px;
+            flex: 0 0 auto;
             min-width: 0;
+            max-width: 100%;
             display: flex;
             flex-direction: column;
             overflow: hidden;
         }
         .st-key-preview-workspace [data-testid="stElementContainer"]:has(iframe[title="gps_layout_editor"]) > div {
-            flex: 1 1 auto;
-            min-height: 0;
             min-width: 0;
-        }
-        .preview-heading {
-            font-size: 1.05rem;
-            font-weight: 700;
-            line-height: 1.15;
-            margin: 0 0 0.45rem 0;
-            color: rgb(245, 248, 251);
-        }
-        div[data-testid="stMarkdownContainer"] h4 {
-            margin-top: 0.45rem;
-            margin-bottom: 0.25rem;
-        }
-        [data-testid="stFileUploaderDropzone"] {
-            min-height: 190px;
-            border-radius: 8px;
-            border: 1px dashed rgba(80, 130, 180, 0.8);
-            background: rgba(18, 31, 43, 0.04);
+            max-width: 100%;
         }
         iframe[title="gps_layout_editor"] {
             width: 100%;
-            height: 100% !important;
             min-width: 0;
             max-width: 100%;
             overflow: hidden;
+        }
+        .preview-heading {
+            font-size: 0.95rem;
+            font-weight: 700;
+            line-height: 1.05;
+            margin: 0 0 0.2rem 0;
+            color: rgb(245, 248, 251);
+        }
+        div[data-testid="stMarkdownContainer"] h4 {
+            margin-top: 0.35rem;
+            margin-bottom: 0.2rem;
         }
         div.stButton > button {
             height: 3rem;
