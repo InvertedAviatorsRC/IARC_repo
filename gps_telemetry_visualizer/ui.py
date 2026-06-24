@@ -36,7 +36,7 @@ from gps_telemetry_visualizer.presets import (
 )
 
 
-PREVIEW_EDITOR_HEIGHT = 760
+PREVIEW_EDITOR_HEIGHT = 680
 
 RESOLUTION_PRESETS = {
     "3840 × 2160 — 4K UHD": (3840, 2160),
@@ -226,18 +226,6 @@ def run_app() -> None:
                         )
                     if _apply_drag_result(st, drag_result):
                         st.rerun()
-
-                    st.caption(
-                        "{} valid GPS rows from {} total rows. Previewing {}. Export trim: {} to {}. Max speed: {:.1f} {}.".format(
-                            data.valid_rows,
-                            data.source_rows,
-                            _format_seconds(playhead_time),
-                            _format_seconds(trim_start),
-                            _format_seconds(data.end_time),
-                            data.max_speed,
-                            config.speed_output_unit.upper(),
-                        )
-                    )
                 except Exception as exc:
                     preview_slot.error(str(exc))
                     create_clicked = st.button("Create", type="primary", use_container_width=True, disabled=True)
@@ -663,6 +651,7 @@ def _inject_css(st) -> None:
             min-height: 0;
             max-width: 100%;
             overflow-x: hidden;
+            overflow-y: hidden;
         }
         .st-key-preview-workspace > div[data-testid="stVerticalBlock"] {
             height: 100%;
@@ -670,8 +659,8 @@ def _inject_css(st) -> None:
             display: flex;
             flex-direction: column;
             overflow-x: hidden;
-            overflow-y: auto;
-            gap: 0.35rem;
+            overflow-y: hidden;
+            gap: 0.3rem;
         }
         .st-key-preview-workspace [data-testid="stElementContainer"]:has(iframe[title="gps_layout_editor"]) {
             flex: 0 0 auto;
@@ -695,12 +684,12 @@ def _inject_css(st) -> None:
             font-size: 0.95rem;
             font-weight: 700;
             line-height: 1.05;
-            margin: 0 0 0.2rem 0;
+            margin: 0 0 0.15rem 0;
             color: rgb(245, 248, 251);
         }
         div[data-testid="stMarkdownContainer"] h4 {
-            margin-top: 0.35rem;
-            margin-bottom: 0.2rem;
+            margin-top: 0.25rem;
+            margin-bottom: 0.15rem;
         }
         div.stButton > button {
             height: 3rem;
