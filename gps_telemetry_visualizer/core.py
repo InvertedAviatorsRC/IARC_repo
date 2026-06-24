@@ -27,6 +27,7 @@ from matplotlib.colors import to_rgba
 
 VALID_EXPORT_MODES = ("map", "speedometer", "both")
 VALID_SPEED_UNITS = ("kmh", "mph", "ms")
+VALID_SPEEDOMETER_STYLES = ("half", "corner")
 LAYOUT_ELEMENT_NAMES = ("map", "speedometer", "top_speed", "furthest_distance")
 MIN_ELEMENT_SCALE = 0.1
 SPEED_RECORD_THRESHOLDS = {
@@ -56,6 +57,7 @@ class RenderConfig:
     start_marker_color: str = "#ffd43b"
     speedometer_color: str = "#00d5ff"
     needle_color: str = "#ff3355"
+    speedometer_style: str = "half"
     text_color: str = "#ffffff"
     background_color: str = "#101820"
     transparent: bool = True
@@ -370,19 +372,25 @@ def canvas_from_config(config: RenderConfig) -> CanvasConfig:
     return CanvasConfig(int(config.output_width), int(config.output_height))
 
 
-def default_overlay_layout(width: int, height: int, export_mode: str = "both") -> OverlayLayout:
+def default_overlay_layout(
+    width: int,
+    height: int,
+    export_mode: str = "both",
+    speedometer_style: str = "half",
+) -> OverlayLayout:
     width = int(width)
     height = int(height)
     aspect = width / float(height)
     map_visible = export_mode in ("map", "both")
     speed_visible = export_mode in ("speedometer", "both")
+    corner_style = speedometer_style == "corner"
 
     if aspect >= 1.2:
         layout = OverlayLayout(
-            map=ElementLayout(width * 0.29, height * 0.46, map_visible),
-            speedometer=ElementLayout(width * 0.72, height * 0.43, speed_visible),
-            furthest_distance=ElementLayout(width * 0.29, height * 0.83, map_visible),
-            top_speed=ElementLayout(width * 0.72, height * 0.78, speed_visible),
+            map=ElementLayout(width * (0.67 if corner_style else 0.29), height * 0.46, map_visible),
+            speedometer=ElementLayout(width * (0.16 if corner_style else 0.72), height * (0.79 if corner_style else 0.43), speed_visible),
+            furthest_distance=ElementLayout(width * (0.67 if corner_style else 0.29), height * 0.83, map_visible),
+            top_speed=ElementLayout(width * (0.16 if corner_style else 0.72), height * (0.54 if corner_style else 0.78), speed_visible),
         )
     elif aspect <= 0.85:
         layout = OverlayLayout(
@@ -404,7 +412,12 @@ def default_overlay_layout(width: int, height: int, export_mode: str = "both") -
 
 def resolve_overlay_layout(config: RenderConfig) -> OverlayLayout:
     if config.layout is None:
-        return default_overlay_layout(config.output_width, config.output_height, config.export_mode)
+        return default_overlay_layout(
+            config.output_width,
+            config.output_height,
+            config.export_mode,
+            config.speedometer_style,
+        )
     return clone_overlay_layout(config.layout)
 
 
@@ -463,8 +476,14 @@ def overlay_layout_to_dict(layout: OverlayLayout) -> dict:
     }
 
 
-def overlay_layout_from_dict(value: object, width: int, height: int, export_mode: str = "both") -> OverlayLayout:
-    default_layout = default_overlay_layout(width, height, export_mode)
+def overlay_layout_from_dict(
+    value: object,
+    width: int,
+    height: int,
+    export_mode: str = "both",
+    speedometer_style: str = "half",
+) -> OverlayLayout:
+    default_layout = default_overlay_layout(width, height, export_mode, speedometer_style)
     if not isinstance(value, dict):
         return default_layout
 
@@ -492,7 +511,7 @@ def compute_element_bounds(name: str, layout: OverlayLayout, canvas: CanvasConfi
     if name not in LAYOUT_ELEMENT_NAMES:
         raise ValueError("Unknown layout element: {}".format(name))
     element = getattr(layout, name)
-    width, height = _element_size(name, canvas)
+    width, height = _element_size(name, canvas, config)
     scale = _normalized_scale(element.scale)
     return ElementBounds(
         name,
@@ -567,7 +586,7 @@ def resize_layout_element_from_corner(
         raise ValueError("corner must be one of: top_left, top_right, bottom_left, bottom_right")
 
     current = compute_element_bounds(name, layout, canvas, config)
-    base_width, base_height = _element_size(name, canvas)
+    base_width, base_height = _element_size(name, canvas, config)
     fixed_x = current.right if "left" in corner else current.left
     fixed_y = current.bottom if "top" in corner else current.top
     sign_x = -1.0 if "left" in corner else 1.0
@@ -675,6 +694,10 @@ def draw_speedometer(
     state: Optional[FrameVisualState] = None,
     show_top_speed: bool = True,
 ) -> None:
+    if config.speedometer_style == "corner":
+        _draw_corner_speedometer(ax, speed, max_speed, config, state, show_top_speed)
+        return
+
     element_scale = _axis_element_scale(ax)
     ax.clear()
     ax.set_aspect("equal")
@@ -750,6 +773,91 @@ def draw_speedometer(
         _draw_top_speed_indicator(ax, state, config)
 
 
+def _draw_corner_speedometer(
+    ax,
+    speed: float,
+    max_speed: float,
+    config: RenderConfig,
+    state: Optional[FrameVisualState],
+    show_top_speed: bool,
+) -> None:
+    """Draw a compact quarter-circle gauge intended for corner placement."""
+    element_scale = _axis_element_scale(ax)
+    ax.clear()
+    ax.set_aspect("equal")
+    ax.axis("off")
+    ax.set_xlim(-1.15, 0.2)
+    ax.set_ylim(-0.25, 1.15)
+    ax.set_facecolor((0, 0, 0, 0) if config.transparent else to_rgba(config.background_color))
+
+    arc = patches.Arc(
+        (0, 0),
+        2,
+        2,
+        theta1=90,
+        theta2=180,
+        linewidth=6 * element_scale,
+        color=to_rgba(config.speedometer_color, 0.78),
+    )
+    ax.add_patch(arc)
+
+    tick_step = _nice_tick_step(max_speed)
+    text_color = to_rgba(config.text_color, 0.92)
+    start_angle = 180.0
+    sweep = 90.0
+
+    for tick in np.arange(0, max_speed + tick_step, tick_step):
+        tick = min(tick, max_speed)
+        angle = math.radians(start_angle - (tick / max_speed) * sweep)
+        x_outer = math.cos(angle)
+        y_outer = math.sin(angle)
+        x_inner = 0.84 * math.cos(angle)
+        y_inner = 0.84 * math.sin(angle)
+
+        ax.plot([x_inner, x_outer], [y_inner, y_outer], linewidth=2 * element_scale, color=to_rgba(config.text_color, 0.72))
+        ax.text(
+            0.68 * math.cos(angle),
+            0.68 * math.sin(angle),
+            str(int(round(tick))),
+            ha="center",
+            va="center",
+            fontsize=8 * element_scale,
+            color=text_color,
+        )
+
+    clamped_speed = max(0.0, min(float(speed), max_speed))
+    needle_angle = math.radians(start_angle - (clamped_speed / max_speed) * sweep)
+    ax.plot(
+        [0, 0.76 * math.cos(needle_angle)],
+        [0, 0.76 * math.sin(needle_angle)],
+        linewidth=4 * element_scale,
+        color=to_rgba(config.needle_color, 1.0),
+    )
+    ax.add_patch(patches.Circle((0, 0), 0.06, color=to_rgba(config.text_color, 1.0)))
+    ax.text(
+        -0.35,
+        -0.07,
+        "{:.1f}".format(float(speed)),
+        ha="center",
+        va="center",
+        fontsize=22 * element_scale,
+        color=to_rgba(config.text_color, 1.0),
+        fontweight="bold",
+    )
+    ax.text(
+        -0.35,
+        -0.18,
+        format_speed_unit(config.speed_output_unit),
+        ha="center",
+        va="center",
+        fontsize=9 * element_scale,
+        color=to_rgba(config.text_color, 0.75),
+    )
+
+    if state is not None and show_top_speed:
+        _draw_top_speed_indicator(ax, state, config)
+
+
 def default_output_name(export_mode: str, extension: str) -> str:
     extension = extension.lstrip(".")
     return "telemetry_{}_overlay.{}".format(export_mode, extension)
@@ -768,6 +876,8 @@ def _validate_config(config: RenderConfig) -> None:
         raise ValueError("end_time must be greater than start_time")
     if int(config.output_width) <= 0 or int(config.output_height) <= 0:
         raise ValueError("output_width and output_height must be positive integers")
+    if config.speedometer_style not in VALID_SPEEDOMETER_STYLES:
+        raise ValueError("speedometer_style must be one of: {}".format(", ".join(VALID_SPEEDOMETER_STYLES)))
     convert_speed(0, config.speed_input_unit, config.speed_output_unit)
 
 
@@ -1173,7 +1283,11 @@ def _axis_element_scale(ax) -> float:
     return _normalized_scale(getattr(ax, "_element_scale", 1.0))
 
 
-def _element_size(name: str, canvas: CanvasConfig) -> Tuple[float, float]:
+def _element_size(
+    name: str,
+    canvas: CanvasConfig,
+    config: Optional[RenderConfig] = None,
+) -> Tuple[float, float]:
     width = float(canvas.width)
     height = float(canvas.height)
     aspect = width / max(1.0, height)
@@ -1186,6 +1300,14 @@ def _element_size(name: str, canvas: CanvasConfig) -> Tuple[float, float]:
         return width * 0.58, height * 0.48
 
     if name == "speedometer":
+        if config is not None and config.speedometer_style == "corner":
+            if aspect >= 1.2:
+                side = min(width * 0.23, height * 0.37)
+            elif aspect <= 0.85:
+                side = min(width * 0.34, height * 0.23)
+            else:
+                side = min(width * 0.28, height * 0.28)
+            return side, side
         if aspect >= 1.2:
             return width * 0.34, height * 0.42
         if aspect <= 0.85:

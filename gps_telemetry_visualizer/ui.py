@@ -104,7 +104,15 @@ def run_app() -> None:
     with controls_col:
         st.subheader("Settings")
         export_mode = st.radio("Output", ["both", "map", "speedometer"], horizontal=True, index=0)
-        _ensure_layout_state(st, output_width, output_height, export_mode)
+        if "speedometer_style" not in st.session_state:
+            st.session_state.speedometer_style = "half"
+        speedometer_style = st.selectbox(
+            "Speedometer style",
+            ["half", "corner"],
+            format_func=lambda value: "180° half gauge" if value == "half" else "90° corner gauge",
+            key="speedometer_style",
+        )
+        _ensure_layout_state(st, output_width, output_height, export_mode, speedometer_style)
 
         gps_col = _column_select(st, "GPS column", columns, detected.get("gps") or "GPS")
         speed_col = _column_select(st, "Speed column", columns, detected.get("speed") or "GSpd(kmh)")
@@ -147,7 +155,7 @@ def run_app() -> None:
             background_color = st.color_picker("Background", background_color)
 
         output_name = st.text_input("Output file name", value=default_output_name(export_mode, output_type))
-        _preset_controls(st, output_width, output_height, export_mode)
+        _preset_controls(st, output_width, output_height, export_mode, speedometer_style)
 
         base_config = RenderConfig(
             export_mode=export_mode,
@@ -165,6 +173,7 @@ def run_app() -> None:
             start_marker_color=start_marker_color,
             speedometer_color=speedometer_color,
             needle_color=needle_color,
+            speedometer_style=speedometer_style,
             background_color=background_color,
             transparent=transparent,
             output_width=output_width,
@@ -183,7 +192,7 @@ def run_app() -> None:
                 preview_slot.info("Upload a CSV to preview the map and speedometer.")
                 create_clicked = st.button("Create", type="primary", use_container_width=True, disabled=True)
                 _show_layout_warnings(st, base_config)
-                _layout_numeric_controls(st, output_width, output_height, export_mode)
+                _layout_numeric_controls(st, output_width, output_height, export_mode, speedometer_style)
             else:
                 try:
                     preview_source = _uploaded_bytes(uploaded_file)
@@ -226,11 +235,11 @@ def run_app() -> None:
                         )
                     )
                     _show_layout_warnings(st, config)
-                    _layout_numeric_controls(st, output_width, output_height, export_mode)
+                    _layout_numeric_controls(st, output_width, output_height, export_mode, speedometer_style)
                 except Exception as exc:
                     preview_slot.error(str(exc))
                     create_clicked = st.button("Create", type="primary", use_container_width=True, disabled=True)
-                    _layout_numeric_controls(st, output_width, output_height, export_mode)
+                    _layout_numeric_controls(st, output_width, output_height, export_mode, speedometer_style)
 
     if create_clicked:
         if uploaded_file is None:
@@ -255,6 +264,7 @@ def _apply_pending_preset_load(st) -> None:
     st.session_state.output_height = pending.output_height
     st.session_state.resolution_preset = _preset_label_for_size(pending.output_width, pending.output_height)
     st.session_state.overlay_layout = clone_overlay_layout(pending.layout)
+    st.session_state.speedometer_style = pending.speedometer_style
     st.session_state.layout_canvas_width = pending.output_width
     st.session_state.layout_canvas_height = pending.output_height
 
@@ -304,16 +314,16 @@ def _resolution_controls(st) -> tuple[int, int]:
     return width, height
 
 
-def _ensure_layout_state(st, width: int, height: int, export_mode: str) -> None:
+def _ensure_layout_state(st, width: int, height: int, export_mode: str, speedometer_style: str = "half") -> None:
     if "overlay_layout" not in st.session_state:
-        st.session_state.overlay_layout = default_overlay_layout(width, height, export_mode)
+        st.session_state.overlay_layout = default_overlay_layout(width, height, export_mode, speedometer_style)
         st.session_state.layout_canvas_width = width
         st.session_state.layout_canvas_height = height
     if "selected_layout_element" not in st.session_state:
         st.session_state.selected_layout_element = "map"
 
 
-def _preset_controls(st, width: int, height: int, export_mode: str) -> None:
+def _preset_controls(st, width: int, height: int, export_mode: str, speedometer_style: str) -> None:
     st.divider()
     st.subheader("Layout presets")
     presets = load_layout_presets()
@@ -336,6 +346,7 @@ def _preset_controls(st, width: int, height: int, export_mode: str) -> None:
                     width,
                     height,
                     clone_overlay_layout(st.session_state.overlay_layout),
+                    speedometer_style,
                 )
             )
             st.success("Saved preset {}".format(preset_name.strip()))
@@ -353,13 +364,13 @@ def _preset_controls(st, width: int, height: int, export_mode: str) -> None:
         )
 
     if st.button("Reset entire layout", use_container_width=True):
-        st.session_state.overlay_layout = default_overlay_layout(width, height, export_mode)
+        st.session_state.overlay_layout = default_overlay_layout(width, height, export_mode, speedometer_style)
         st.rerun()
 
 
-def _layout_numeric_controls(st, width: int, height: int, export_mode: str) -> None:
+def _layout_numeric_controls(st, width: int, height: int, export_mode: str, speedometer_style: str) -> None:
     st.markdown("#### Elements")
-    defaults = default_overlay_layout(width, height, export_mode)
+    defaults = default_overlay_layout(width, height, export_mode, speedometer_style)
     labels = {
         "map": "Map",
         "speedometer": "Speedometer",

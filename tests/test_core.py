@@ -249,6 +249,30 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(fig.get_facecolor()[3], 0)
             plt.close(fig)
 
+    def test_speedometer_styles_validate_render_and_change_bounds(self):
+        csv_text = (
+            "GPS,GSpd(kmh),Hdg(°),Alt(m)\n"
+            "44.0 -93.0,0,0,200\n"
+            "44.0001 -93.0001,36,10,201\n"
+        )
+        canvas = CanvasConfig(1920, 1080)
+        layout = default_overlay_layout(1920, 1080, "speedometer")
+        half_config = RenderConfig(export_mode="speedometer", speedometer_style="half")
+        corner_config = RenderConfig(export_mode="speedometer", speedometer_style="corner")
+
+        half_bounds = compute_element_bounds("speedometer", layout, canvas, half_config)
+        corner_bounds = compute_element_bounds("speedometer", layout, canvas, corner_config)
+        self.assertLess(corner_bounds.width, half_bounds.width)
+        self.assertLess(corner_bounds.height, half_bounds.height)
+
+        for config in (half_config, corner_config):
+            fig = render_static_preview(io.StringIO(csv_text), config, frame_time=0.5)
+            self.assertGreaterEqual(len(fig.axes), 1)
+            plt.close(fig)
+
+        with self.assertRaisesRegex(ValueError, "speedometer_style"):
+            prepare_telemetry(io.StringIO(csv_text), RenderConfig(speedometer_style="diagonal"))
+
     def test_layout_positions_are_independent_and_convert_to_bounds(self):
         layout = OverlayLayout(
             map=ElementLayout(100, 200, True, 1.5),
@@ -377,11 +401,16 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(old["Old"].layout.map.x, 10)
             self.assertGreater(old["Old"].layout.map.y, 0)
             self.assertEqual(old["Old"].layout.map.scale, 1.0)
+            self.assertEqual(old["Old"].speedometer_style, "half")
 
             scaled_layout = OverlayLayout(map=ElementLayout(111, 222, True, 1.75))
             save_layout_preset(LayoutPreset("Scaled", 1920, 1080, scaled_layout), path)
             loaded_again = load_layout_presets(path)
             self.assertAlmostEqual(loaded_again["Scaled"].layout.map.scale, 1.75)
+
+            save_layout_preset(LayoutPreset("Corner", 1920, 1080, layout, speedometer_style="corner"), path)
+            loaded_corner = load_layout_presets(path)
+            self.assertEqual(loaded_corner["Corner"].speedometer_style, "corner")
 
     def test_default_layouts_are_valid_for_common_aspects(self):
         for width, height in ((1920, 1080), (1080, 1920), (1080, 1080)):

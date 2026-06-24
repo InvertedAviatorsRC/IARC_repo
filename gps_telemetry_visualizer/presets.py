@@ -7,13 +7,14 @@ from pathlib import Path
 
 from gps_telemetry_visualizer.core import (
     OverlayLayout,
+    VALID_SPEEDOMETER_STYLES,
     default_overlay_layout,
     overlay_layout_from_dict,
     overlay_layout_to_dict,
 )
 
 
-PRESET_FILE_VERSION = 2
+PRESET_FILE_VERSION = 3
 
 
 @dataclass
@@ -22,6 +23,7 @@ class LayoutPreset:
     output_width: int
     output_height: int
     layout: OverlayLayout
+    speedometer_style: str = "half"
     version: int = PRESET_FILE_VERSION
 
 
@@ -52,12 +54,14 @@ def load_layout_presets(path: Path | None = None) -> dict[str, LayoutPreset]:
             continue
         width = _positive_int(value.get("output_width"), 1920)
         height = _positive_int(value.get("output_height"), 1080)
-        layout = overlay_layout_from_dict(value.get("layout", value), width, height, "both")
+        speedometer_style = _speedometer_style(value.get("speedometer_style"))
+        layout = overlay_layout_from_dict(value.get("layout", value), width, height, "both", speedometer_style)
         presets[preset_name] = LayoutPreset(
             name=preset_name,
             output_width=width,
             output_height=height,
             layout=layout,
+            speedometer_style=speedometer_style,
             version=_positive_int(value.get("version"), PRESET_FILE_VERSION),
         )
 
@@ -78,8 +82,13 @@ def delete_layout_preset(name: str, path: Path | None = None) -> None:
     _write_presets(presets, path)
 
 
-def reset_layout(width: int, height: int, export_mode: str = "both") -> OverlayLayout:
-    return default_overlay_layout(width, height, export_mode)
+def reset_layout(
+    width: int,
+    height: int,
+    export_mode: str = "both",
+    speedometer_style: str = "half",
+) -> OverlayLayout:
+    return default_overlay_layout(width, height, export_mode, _speedometer_style(speedometer_style))
 
 
 def _write_presets(presets: dict[str, LayoutPreset], path: Path) -> None:
@@ -92,6 +101,7 @@ def _write_presets(presets: dict[str, LayoutPreset], path: Path) -> None:
                 "name": preset.name,
                 "output_width": int(preset.output_width),
                 "output_height": int(preset.output_height),
+                "speedometer_style": _speedometer_style(preset.speedometer_style),
                 "layout": overlay_layout_to_dict(preset.layout),
             }
             for name, preset in sorted(presets.items())
@@ -122,3 +132,7 @@ def _positive_int(value: object, default: int) -> int:
     except Exception:
         return default
     return parsed if parsed > 0 else default
+
+
+def _speedometer_style(value: object) -> str:
+    return str(value) if value in VALID_SPEEDOMETER_STYLES else "half"

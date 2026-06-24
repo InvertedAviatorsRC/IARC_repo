@@ -25,6 +25,12 @@ def main() -> None:
     parser.add_argument("--start-marker-color", default="#ffd43b")
     parser.add_argument("--speedometer-color", default="#00d5ff")
     parser.add_argument("--needle-color", default="#ff3355")
+    parser.add_argument(
+        "--speedometer-style",
+        choices=["half", "corner"],
+        default="half",
+        help="Use the existing half gauge or the compact corner gauge.",
+    )
     parser.add_argument("--opaque", action="store_true", help="Render with an opaque dark background")
     parser.add_argument("--start-time", type=float, default=0.0, help="Start rendering at this many seconds into the telemetry.")
     parser.add_argument("--end-time", type=float, help="Stop rendering at this many seconds into the telemetry.")
@@ -48,6 +54,7 @@ def main() -> None:
         start_marker_color=args.start_marker_color,
         speedometer_color=args.speedometer_color,
         needle_color=args.needle_color,
+        speedometer_style=args.speedometer_style,
         transparent=not args.opaque,
         start_time=args.start_time,
         end_time=args.end_time,

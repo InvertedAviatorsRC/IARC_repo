@@ -38,6 +38,11 @@ class LayoutEditorComponentTests(unittest.TestCase):
         self.assertIn('iframe[title="gps_layout_editor"]', self.ui)
         self.assertIn("height: 100% !important", self.ui)
 
+    def test_ui_exposes_speedometer_style_selector(self):
+        self.assertIn('"Speedometer style"', self.ui)
+        self.assertIn('"180° half gauge"', self.ui)
+        self.assertIn('"90° corner gauge"', self.ui)
+
 
 if __name__ == "__main__":
     unittest.main()
