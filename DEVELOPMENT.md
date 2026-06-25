@@ -3,7 +3,8 @@
 This guide is for working on GPS Telemetry Visualizer from source. For normal use,
 download the packaged desktop app from the project releases. Local source runs are
 faster when you are changing the UI, preview layout, timeline, colors, or editor
-interactions.
+interactions. The final downloadable product UI is the native PySide app. The
+Streamlit UI remains available as legacy/prototype tooling.
 
 ## Requirements
 
@@ -47,21 +48,22 @@ git pull --ff-only
 
 ## Recommended Local Iteration Workflow
 
-For UI and layout work, do not wait for GitHub Actions to build the desktop app
-after every change.
+For native UI and layout work, do not wait for GitHub Actions to build the desktop
+app after every change.
 
 1. Run `./dev_setup.sh` once.
-2. Run `./dev_run_streamlit.sh` for the fastest UI iteration loop.
+2. Run `./dev_run_native.sh` for the final product UI.
 3. Edit the local source files.
-4. Refresh the browser, or let Streamlit reload automatically.
+4. Close and relaunch the native app after source changes.
 5. Run `./dev_test.sh`.
-6. Run `./dev_run_desktop.sh` only when you need to test the packaged-app launcher.
+6. Use `./dev_run_streamlit.sh` only for legacy/prototype comparison.
 7. Push and trigger the GitHub desktop build only after the feature looks good locally.
 
 The same commands are available through `make`:
 
 ```bash
 make setup
+make native
 make streamlit
 make test
 make desktop
@@ -87,9 +89,20 @@ interpreter explicitly:
 PYTHON_BIN=/path/to/python3.12 ./dev_setup.sh
 ```
 
-## Run The Streamlit UI
+## Run The Native Desktop App
 
-For preview, layout, timeline, drag, resize-handle, color, and warning changes, run:
+For the final product UI, run:
+
+```bash
+./dev_run_native.sh
+```
+
+This starts the PySide app from the editable local install. It does not open a
+browser and does not start a local web server.
+
+## Run The Legacy Streamlit Prototype
+
+For prototype or comparison work, run:
 
 ```bash
 ./dev_run_streamlit.sh
@@ -98,17 +111,6 @@ For preview, layout, timeline, drag, resize-handle, color, and warning changes, 
 The terminal prints a local address, normally `http://localhost:8501`. Open it in a
 browser. Streamlit watches the source files and reloads after relevant changes.
 Press `Ctrl-C` in the terminal to stop it.
-
-## Run The Packaged-App Launcher From Source
-
-To test the Streamlit launcher used by the packaged downloads without creating a packaged `.app`:
-
-```bash
-./dev_run_desktop.sh
-```
-
-This starts `gps-vis-desktop` from the editable local install. It opens the same
-Streamlit UI as `./dev_run_streamlit.sh`; stop it from the terminal when finished.
 
 ## Run Tests
 
@@ -122,8 +124,8 @@ This runs `pytest -q` against the local source tree.
 
 ## Optional Local Desktop Build
 
-Desktop builds are slower and are not needed for ordinary Streamlit UI work. On
-macOS, build a local app and ZIP only when you need to test the packaged result:
+Desktop builds are slower and are not needed for ordinary native source testing. On
+macOS, build a local native app and ZIP only when you need to test the packaged result:
 
 ```bash
 ./dev_build_desktop.sh

@@ -15,12 +15,11 @@ python -m PyInstaller `
   --noconfirm `
   --clean `
   --icon "$env:PYINSTALLER_CONFIG_DIR\gps_app_icon.png" `
-  --add-data "gps_telemetry_visualizer;gps_telemetry_visualizer" `
-  --collect-all streamlit `
   --collect-all gps_telemetry_visualizer `
   --collect-all imageio_ffmpeg `
+  --collect-all PySide6 `
   --hidden-import matplotlib.backends.backend_agg `
-  streamlit_desktop_app.py
+  native_desktop_app.py
 
 $archive = "release\GPS-Telemetry-Visualizer-Windows-x64.zip"
 New-Item -ItemType Directory -Force -Path "release" | Out-Null

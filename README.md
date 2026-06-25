@@ -56,7 +56,7 @@ The right-click step is normally only needed the first time because the download
 5. Review the preview.
 6. Click `Create`.
 
-The downloadable app opens the same Streamlit interface used for local development. It lets you:
+The downloadable app is a native PySide desktop app. It lets you:
 
 - Drag and drop a CSV file
 - Choose GPS, speed, heading, and altitude columns
@@ -99,8 +99,7 @@ Use `.mov` when you want a ProRes 4444 overlay with transparency for video editi
 
 The downloadable apps above are the easiest option. These instructions are for developers who want to run or modify the source code.
 
-For the recommended local development workflow, including fast Streamlit UI testing,
-see [DEVELOPMENT.md](DEVELOPMENT.md).
+For the recommended local development workflow, see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ### Requirements
 
@@ -135,15 +134,15 @@ Install the app:
 python -m pip install -e .
 ```
 
-Run the packaged-app launcher from source:
+Run the native desktop app from source:
 
 ```bash
-gps-vis-desktop
+gps-vis-native
 ```
 
-## Browser App
+## Legacy Streamlit Prototype
 
-Developers can also run the Streamlit interface directly:
+Developers can still run the Streamlit prototype directly:
 
 ```bash
 gps-vis
@@ -166,7 +165,7 @@ python -m pip install -e ".[dev]"
 Build a macOS ZIP:
 
 ```bash
-bash scripts/build_macos_app.sh
+./dev_build_desktop.sh
 ```
 
 Build a Windows ZIP from PowerShell:
@@ -216,7 +215,7 @@ gps-vis-render path/to/telemetry.csv output/telemetry_both_overlay.mov --mode bo
 
 ## Troubleshooting Source Builds
 
-If `gps-vis-desktop` is not found, activate the virtual environment and try again.
+If `gps-vis-native` is not found, activate the virtual environment and try again.
 
 On macOS or Linux:
 

@@ -1,7 +1,10 @@
-.PHONY: setup streamlit desktop test build
+.PHONY: setup native streamlit desktop test build
 
 setup:
 	./dev_setup.sh
+
+native:
+	./dev_run_native.sh
 
 streamlit:
 	./dev_run_streamlit.sh

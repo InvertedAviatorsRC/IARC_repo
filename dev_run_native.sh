@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the native desktop app from the editable local source tree.
+# Run the final native PySide desktop app from the editable local source tree.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,10 +13,10 @@ fi
 cd "$ROOT_DIR"
 source "$VENV_DIR/bin/activate"
 
-if ! command -v gps-vis-desktop >/dev/null 2>&1; then
+if ! command -v gps-vis-native >/dev/null 2>&1; then
   echo "The local app is not installed in .venv. Run ./dev_setup.sh first." >&2
   exit 1
 fi
 
 echo "Starting the native desktop app. Close its window when you are done."
-exec gps-vis-desktop
+exec gps-vis-native

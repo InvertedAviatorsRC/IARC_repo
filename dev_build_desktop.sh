@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Optional local packaging command. Normal UI work should use dev_run_streamlit.sh.
+# Optional local packaging command. Normal native UI work should use dev_run_native.sh.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -23,7 +23,8 @@ dev = ["pytest>=7", "pyinstaller>=6.20"]
 
 [project.scripts]
 gps-vis = "gps_telemetry_visualizer.ui:main"
-gps-vis-desktop = "gps_telemetry_visualizer.streamlit_launcher:main"
+gps-vis-desktop = "gps_telemetry_visualizer.native_app:main"
+gps-vis-native = "gps_telemetry_visualizer.native_app:main"
 gps-vis-render = "gps_telemetry_visualizer.cli:main"
 
 [tool.setuptools.packages.find]

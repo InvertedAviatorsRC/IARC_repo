@@ -82,10 +82,11 @@ cat <<'EOF'
 Local development setup is ready.
 
 Next steps:
-  ./dev_run_streamlit.sh  # Fast browser UI/layout iteration
+  ./dev_run_native.sh     # Final native PySide app
+  ./dev_run_streamlit.sh  # Legacy browser prototype
   ./dev_test.sh           # Run automated tests
-  ./dev_run_desktop.sh    # Test the native desktop wrapper
+  ./dev_run_desktop.sh    # Alias for the native desktop app
   ./dev_build_desktop.sh  # Optional: build a local macOS app
 
-You can also use: make streamlit, make test, make desktop, or make build.
+You can also use: make native, make streamlit, make test, make desktop, or make build.
 EOF
