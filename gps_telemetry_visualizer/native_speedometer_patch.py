@@ -68,7 +68,7 @@ def extend_native_app(native_app) -> None:
         self.speedometer_tick_font_scale.setDecimals(1)
         self.speedometer_tick_font_scale.setSuffix("x")
         self.speedometer_tick_font_scale.setMaximumWidth(90)
-        row.addWidget(QLabel("Tick font size"))
+        row.addWidget(QLabel("Tick/unit font size"))
         row.addWidget(self.speedometer_tick_font_scale)
         row.addStretch()
         group.layout().addLayout(row)
@@ -170,7 +170,7 @@ def _draw_half_speedometer(
         core.format_speed_unit(config.speed_output_unit),
         ha="center",
         va="center",
-        fontsize=11 * element_scale,
+        fontsize=11 * element_scale * tick_font_scale,
         color=core.to_rgba(config.text_color, 0.75),
     )
 
@@ -313,7 +313,7 @@ def _draw_corner_speedometer(
         core.format_speed_unit(config.speed_output_unit),
         ha="center",
         va="center",
-        fontsize=9 * element_scale,
+        fontsize=9 * element_scale * tick_font_scale,
         color=core.to_rgba(config.text_color, 0.75),
     )
 
