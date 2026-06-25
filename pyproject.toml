@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "pyinstaller>=6.20"]
+dev = ["pytest>=7", "pyinstaller>=6.20", "setuptools<80"]
 
 [project.scripts]
 gps-vis = "gps_telemetry_visualizer.ui:main"
