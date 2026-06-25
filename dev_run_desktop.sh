@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the native desktop wrapper from the editable local source tree.
+# Run the packaged-app Streamlit launcher from the editable local source tree.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,5 +18,5 @@ if ! command -v gps-vis-desktop >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Starting the local desktop app. Close its window when you are done."
+echo "Starting the packaged-app Streamlit launcher. Press Ctrl-C to stop it."
 exec gps-vis-desktop

@@ -56,7 +56,7 @@ The right-click step is normally only needed the first time because the download
 5. Review the preview.
 6. Click `Create`.
 
-The desktop app lets you:
+The downloadable app opens the same Streamlit interface used for local development. It lets you:
 
 - Drag and drop a CSV file
 - Choose GPS, speed, heading, and altitude columns
@@ -135,15 +135,15 @@ Install the app:
 python -m pip install -e .
 ```
 
-Run the native desktop app:
+Run the packaged-app launcher from source:
 
 ```bash
 gps-vis-desktop
 ```
 
-## Optional Browser App
+## Browser App
 
-Developers can also run a local Streamlit version:
+Developers can also run the Streamlit interface directly:
 
 ```bash
 gps-vis

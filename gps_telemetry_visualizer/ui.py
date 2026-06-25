@@ -676,6 +676,7 @@ def _inject_css(st) -> None:
         }
         iframe[title="gps_layout_editor"] {
             width: 100%;
+            height: 100% !important;
             min-width: 0;
             max-width: 100%;
             overflow: hidden;

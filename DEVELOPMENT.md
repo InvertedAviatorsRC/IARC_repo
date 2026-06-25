@@ -55,7 +55,7 @@ after every change.
 3. Edit the local source files.
 4. Refresh the browser, or let Streamlit reload automatically.
 5. Run `./dev_test.sh`.
-6. Run `./dev_run_desktop.sh` only when you need to test the native desktop wrapper.
+6. Run `./dev_run_desktop.sh` only when you need to test the packaged-app launcher.
 7. Push and trigger the GitHub desktop build only after the feature looks good locally.
 
 The same commands are available through `make`:
@@ -99,16 +99,16 @@ The terminal prints a local address, normally `http://localhost:8501`. Open it i
 browser. Streamlit watches the source files and reloads after relevant changes.
 Press `Ctrl-C` in the terminal to stop it.
 
-## Run The Desktop App From Source
+## Run The Packaged-App Launcher From Source
 
-To test the native wrapper without creating a packaged `.app`:
+To test the Streamlit launcher used by the packaged downloads without creating a packaged `.app`:
 
 ```bash
 ./dev_run_desktop.sh
 ```
 
-This starts `gps-vis-desktop` from the editable local install. Close the app window
-when finished.
+This starts `gps-vis-desktop` from the editable local install. It opens the same
+Streamlit UI as `./dev_run_streamlit.sh`; stop it from the terminal when finished.
 
 ## Run Tests
 

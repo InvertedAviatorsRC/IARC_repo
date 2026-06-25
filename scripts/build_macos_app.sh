@@ -16,9 +16,12 @@ python -m PyInstaller \
   --noconfirm \
   --clean \
   --icon "$PYINSTALLER_CONFIG_DIR/gps_app_icon.png" \
+  --add-data "gps_telemetry_visualizer:gps_telemetry_visualizer" \
+  --collect-all streamlit \
+  --collect-all gps_telemetry_visualizer \
   --collect-all imageio_ffmpeg \
   --hidden-import matplotlib.backends.backend_agg \
-  desktop_app.py
+  streamlit_desktop_app.py
 
 binary="dist/GPS Telemetry Visualizer.app/Contents/MacOS/GPS Telemetry Visualizer"
 binary_info="$(file "$binary")"

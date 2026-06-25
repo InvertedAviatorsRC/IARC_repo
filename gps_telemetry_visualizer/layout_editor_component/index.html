@@ -6,6 +6,7 @@
       html,
       body {
         margin: 0;
+        height: 100%;
         padding: 0;
         background: transparent;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -13,8 +14,8 @@
       #editor {
         position: relative;
         width: 100%;
-        height: 720px;
-        min-height: 360px;
+        height: 100%;
+        min-height: 0;
         overflow: hidden;
         border: 1px solid rgba(148, 163, 184, 0.45);
         border-radius: 8px;
@@ -78,7 +79,7 @@
       const editor = document.getElementById("editor");
       const canvas = document.getElementById("canvas");
       const preview = document.getElementById("preview");
-      let args = { elements: [], canvas_width: 1920, canvas_height: 1080, selected: "map", editor_height: 720 };
+      let args = { elements: [], canvas_width: 1920, canvas_height: 1080, selected: "map" };
       let active = null;
       let selected = "map";
 
@@ -90,19 +91,11 @@
         send("streamlit:componentReady", { apiVersion: 1 });
       }
 
-      function setEditorHeight() {
-        const requestedHeight = Number(args.editor_height || 720);
-        const safeHeight = Math.max(360, Math.min(1400, requestedHeight));
-        editor.style.height = `${safeHeight}px`;
-      }
-
       function setHeight() {
-        setEditorHeight();
         send("streamlit:setFrameHeight", { height: Math.ceil(editor.getBoundingClientRect().height) + 4 });
       }
 
       function updateCanvasBounds() {
-        setEditorHeight();
         const editorWidth = editor.clientWidth || 1;
         const editorHeight = editor.clientHeight || 1;
         const outputRatio = args.canvas_width / Math.max(1, args.canvas_height);
