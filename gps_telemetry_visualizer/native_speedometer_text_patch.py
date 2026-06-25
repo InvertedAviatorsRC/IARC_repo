@@ -168,7 +168,7 @@ def _draw_corner_speedometer(
         "{:.1f}".format(float(speed)),
         ha="center",
         va="center",
-        fontsize=22 * element_scale,
+        fontsize=22 * element_scale * tick_font_scale,
         color=core.to_rgba(config.text_color, 1.0),
         fontweight="bold",
     )
