@@ -10,8 +10,31 @@ def setup(native_app) -> None:
     """Install native speedometer options and tune corner speed readout placement."""
     speedometer_patch.install()
     speedometer_patch.extend_native_app(native_app)
+    _extend_tick_font_scale_range(native_app)
+    speedometer_patch._tick_font_scale = _tick_font_scale
     speedometer_patch._draw_corner_right_speedometer = _draw_corner_right_speedometer
     speedometer_patch._draw_corner_left_speedometer = _draw_corner_left_speedometer
+
+
+def _extend_tick_font_scale_range(native_app) -> None:
+    original_build_settings_group = native_app.MainWindow._build_settings_group
+
+    if getattr(original_build_settings_group, "_tick_range_extended", False):
+        return
+
+    def _build_settings_group(self):
+        group = original_build_settings_group(self)
+        if hasattr(self, "speedometer_tick_font_scale"):
+            self.speedometer_tick_font_scale.setRange(0.5, 10.0)
+            self.speedometer_tick_font_scale.setSingleStep(0.25)
+        return group
+
+    _build_settings_group._tick_range_extended = True
+    native_app.MainWindow._build_settings_group = _build_settings_group
+
+
+def _tick_font_scale(config: core.RenderConfig) -> float:
+    return max(0.5, min(10.0, float(getattr(config, "speedometer_tick_font_scale", 1.0))))
 
 
 def _draw_corner_right_speedometer(
@@ -83,7 +106,7 @@ def _draw_corner_speedometer(
     speed_unit_y: float,
 ) -> None:
     element_scale = core._axis_element_scale(ax)
-    tick_font_scale = speedometer_patch._tick_font_scale(config)
+    tick_font_scale = _tick_font_scale(config)
     ax.clear()
     ax.set_aspect("equal")
     ax.axis("off")
