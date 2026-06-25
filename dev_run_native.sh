@@ -13,10 +13,5 @@ fi
 cd "$ROOT_DIR"
 source "$VENV_DIR/bin/activate"
 
-if ! command -v gps-vis-native >/dev/null 2>&1; then
-  echo "The local app is not installed in .venv. Run ./dev_setup.sh first." >&2
-  exit 1
-fi
-
 echo "Starting the native desktop app. Close its window when you are done."
-exec gps-vis-native
+python native_desktop_app.py
