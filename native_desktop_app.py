@@ -6,6 +6,7 @@ from gps_telemetry_visualizer import native_app
 install_smoothing()
 setup(native_app)
 setup_colored_trail(native_app)
+# signal overlay patch pending
 main = native_app.main
 
 
